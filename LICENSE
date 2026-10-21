@@ -1,0 +1,19 @@
+# Condiciones de uso del código y los materiales
+
+El Excel de la profesora y sus derivados tienen acceso restringido. Obtenerlos
+requiere autorización de sus responsables; el repositorio no concede permiso
+de redistribución. Solicitar el acceso a los autores del estudio, indicando el
+uso de investigación previsto. La disponibilidad efectiva depende de esa
+autorización y debe declararse en cualquier publicación.
+
+No incluir en Git el Excel, particiones, predicciones individuales, valores SHAP
+por diseño, bases privadas ni checkpoints. Los checkpoints RL contienen replay
+con información de los datos y no son únicamente pesos de una red.
+
+La licencia del código queda pendiente de definición por sus titulares. Estas
+condiciones no conceden una licencia ni atribuyen derechos sobre materiales de
+terceros.
+
+Las figuras y tablas agregadas deben compartirse conforme a la autorización
+aplicable. Los PDF de literatura y recursos locales excluidos de Git no forman
+parte de la distribución del software.

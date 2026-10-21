@@ -1,0 +1,73 @@
+[project]
+name = "proyecto-de-titulo-cesar-salazar-joaquin-forcael"
+version = "0.1.0"
+description = "Prediccion de respuestas de cerchas y comparacion de estrategias de seleccion de disenos con aprendizaje por refuerzo"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    # Core datos tabulares
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "openpyxl>=3.1",
+    "scipy>=1.13",
+    "scikit-learn>=1.5",
+    # Viz tesis
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+    # Boosting tabular en CPU
+    "lightgbm>=4.5",
+    "xgboost>=2.1",
+    "catboost>=1.2",
+    # Tuning + MOO + explain
+    "optuna>=4.2",
+    "pymoo>=0.6.1",
+    "shap>=0.46",
+    # Redes densas y RL en CPU
+    "joblib>=1.4",
+    "threadpoolctl>=3.1",
+    "gymnasium==1.4.0",
+    "torch==2.14.1",
+    "torchrl==0.14.1",
+    "tensordict==0.14.3",
+    "psutil>=7.2.2",
+    "tabpfn==9.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.1",
+    "ruff>=0.17.0",
+    "pytest>=8.3",
+    "nbclient>=0.10",
+    "nbconvert>=7.16",
+]
+[tool.uv]
+default-groups = ["dev"]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cuda", marker = "sys_platform != 'darwin'" },
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/truss_research"]
+
+[tool.ruff]
+target-version = "py313"
+extend-include = ["*.ipynb"]
+extend-exclude = ["archive", "artifacts", "assets", "data", "reports"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

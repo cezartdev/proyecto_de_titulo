@@ -1,0 +1,37 @@
+name: Comprobaciones reproducibles
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13.5"
+          enable-cache: true
+      - name: Instalar dependencias bloqueadas
+        run: uv sync --locked
+      - name: Comprobar estilo
+        run: uv run --locked ruff check .
+      - name: Comprobar formato
+        run: uv run --locked ruff format --check .
+      - name: Ejecutar pruebas sin datos restringidos
+        run: uv run --locked python tests/ejecutar.py
+      - name: Planificar sin Excel ni entrenamientos
+        run: uv run --locked python -m truss_research ejecutar-estudio --destino artifacts/ci_plan --plan

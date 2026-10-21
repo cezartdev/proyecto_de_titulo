@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Data
+data/*
+!data/README.md
+assets/
+
+# Resultados regenerables y caches
+artifacts/
+archive/
+reports/*
+!reports/README.md
+.ruff_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# Planning
+planning/
+
+# Logs
+*.log

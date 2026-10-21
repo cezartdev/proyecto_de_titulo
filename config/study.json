@@ -1,0 +1,235 @@
+{
+  "study": {
+    "label": "posterior",
+    "models": [
+      "dummy",
+      "ridge",
+      "random_forest",
+      "svr",
+      "gpr",
+      "catboost",
+      "xgboost",
+      "lightgbm",
+      "mlp",
+      "targetwise",
+      "tabpfn"
+    ],
+    "seeds": [
+      42,
+      43,
+      44,
+      45,
+      46
+    ],
+    "representative_seed": 42,
+    "cv_seed": 42,
+    "trials": 30,
+    "catalog_size": 32,
+    "budgets": [
+      32,
+      64,
+      128
+    ],
+    "episodes_per_seed": 10,
+    "rl_steps": 50000,
+    "rl_batch": 64,
+    "rl_warmup": 1000,
+    "rl_hidden": 64,
+    "validation_interval": 5000,
+    "background_size": 100,
+    "permutation_rounds": 10,
+    "outer_folds": 5,
+    "inner_folds": 3,
+    "final_tuning_folds": 3,
+    "calibration_required": true,
+    "calibration_fraction": 0.2,
+    "experiment": "evolution",
+    "split_protocol": "first_appearance",
+    "objective_mode": "three"
+  },
+  "pruning": {
+    "enabled": true,
+    "startup_trials": 5,
+    "minimum_folds": 2
+  },
+  "evolution": {
+    "enabled": true,
+    "population_size": 8,
+    "proposal_pool": 8,
+    "max_mating_attempts": 10,
+    "crossover_probability": 0.9,
+    "crossover_eta": 15.0,
+    "mutation_eta": 20.0,
+    "initialization_ablation": true
+  },
+  "analysis": {
+    "catalog_sizes": [
+      32,
+      64
+    ],
+    "reference_margins": [
+      0.05,
+      0.1,
+      0.2
+    ],
+    "bootstrap_repeats": 2000,
+    "bootstrap_seed": 42,
+    "predictive_block_generations": 2,
+    "generalization_seeds": [
+      42
+    ],
+    "generalization": {
+      "fractions": [
+        0.64,
+        0.16,
+        0.1,
+        0.1
+      ],
+      "min_training": 128,
+      "min_calibration": 40,
+      "min_evaluation": 32,
+      "control_models": [
+        "dummy",
+        "ridge",
+        "catboost",
+        "xgboost",
+        "tabpfn"
+      ]
+    },
+    "learning_curves": {
+      "enabled": true,
+      "models": [
+        "dummy",
+        "ridge",
+        "catboost",
+        "xgboost",
+        "tabpfn"
+      ],
+      "train_sizes": [
+        128,
+        256,
+        512
+      ],
+      "subset_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+      ]
+    }
+  },
+  "measurement": {
+    "memory_interval_ms": 50,
+    "warmup": 3,
+    "inference_repeats": 30,
+    "selection_repeats": 5,
+    "seed": 42,
+    "batch_sizes": [
+      1,
+      32,
+      64
+    ],
+    "reuse_counts": [
+      1,
+      10,
+      100,
+      1000
+    ],
+    "cpu_repeats": 3,
+    "cpu_min_seconds": 0.1,
+    "cpu_min_ticks": 8,
+    "cpu_max_wall_seconds": 2.0,
+    "cpu_probe_seconds": 0.25
+  },
+  "execution": {
+    "cpu_workers": 12,
+    "memory_limit_fraction": 0.8,
+    "telemetry_interval_seconds": 1.0
+  },
+  "parameters": {
+    "early_stopping_rounds": 30,
+    "gpr_max_iter": 2000,
+    "gpr_max_fun": 15000,
+    "gpr_max_line_search": 50,
+    "gpr_recovery_line_search": 100,
+    "gpr_ftol": 2.22e-09,
+    "gpr_gtol": 1e-05
+  },
+  "rl": {
+    "algorithms": [
+      "double_dqn",
+      "dueling_double_dqn",
+      "ppo"
+    ],
+    "dqn": {
+      "learning_rate": 0.001,
+      "replay_size": 50000,
+      "target_interval": 500,
+      "epsilon_steps": 30000,
+      "epsilon_start": 1.0,
+      "epsilon_end": 0.05,
+      "discount": 1.0,
+      "gradient_clip": 10.0,
+      "train_frequency": 4,
+      "gradient_steps": 1
+    },
+    "ppo": {
+      "learning_rate": 0.0003,
+      "rollout_steps": 1024,
+      "epochs": 10,
+      "clip_epsilon": 0.2,
+      "gae_lambda": 0.95,
+      "discount": 1.0,
+      "entropy_coeff": 0.01,
+      "critic_coeff": 0.5,
+      "gradient_clip": 0.5,
+      "advantage_epsilon": 1e-08
+    },
+    "ablations": true,
+    "repetition_ablations": true,
+    "repeat_penalty": 1.0
+  },
+  "adaptive": {
+    "beta": 1.0,
+    "online_residual": true
+  },
+  "tabpfn": {
+    "n_estimators": 8,
+    "device": "cpu",
+    "fit_mode": "fit_with_cache",
+    "preprocessing_workers": 1,
+    "numeric_threads": 1,
+    "checkpoint_dir": "artifacts/pretrained/tabpfn"
+  },
+  "limits": {
+    "span_m": 20.0,
+    "serviceability_divisor": 700.0,
+    "utilization_limit": 1.0
+  },
+  "proposals": {
+    "pool_size": 32,
+    "max_regeneration": 10,
+    "support_quantile": 0.95,
+    "uncertainty_multiplier": 1.0,
+    "evaluation_episodes": 20,
+    "max_evaluations": 256,
+    "max_generated": 4096
+  },
+  "search": {
+    "strategies": [
+      "evolution",
+      "random",
+      "greedy",
+      "rl",
+      "rl_assisted",
+      "contextual_bandit",
+      "contextual_bandit_assisted",
+      "de",
+      "de_assisted"
+    ],
+    "differential_weight": 0.5,
+    "differential_crossover": 0.9,
+    "target_fraction": 0.9
+  }
+}

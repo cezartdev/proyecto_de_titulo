@@ -10,7 +10,7 @@ El objetivo principal es comparar regresores de masa, utilización promedio y de
 
 **Pregunta secundaria:** ¿Qué desempeño presenta una propuesta de búsqueda guiada por modelos frente a estrategias de referencia, bajo presupuestos comunes de consulta y las limitaciones del archivo histórico y de los sustitutos?
 
-La evaluación principal es temporal y exploratoria. La preparación vigente contiene 901 diseños de ajuste, 166 de calibración, 98 de validación y 108 de prueba; prueba solo representa las topologías 1 y 2. Estos conteos describen la preparación existente y deben comprobarse en su manifiesto. La sensibilidad por diseños únicos estudia interpolación en la misma fuente, no constituye nueva evidencia externa. El procedimiento estadístico y los comandos están en [SCOPE.md](docs/SCOPE.md) y [ejecucion.md](docs/ejecucion.md).
+La evaluación principal es temporal y exploratoria. La preparación vigente contiene 901 diseños de ajuste, 166 de calibración, 98 de validación y 108 de prueba; prueba solo representa las topologías 1 y 2. Estos conteos describen la preparación existente y deben comprobarse en su manifiesto. La sensibilidad por diseños únicos estudia interpolación en la misma fuente, no constituye nueva evidencia externa.
 
 El control de bandido contextual usa el mismo estado y capacidad que Double DQN, pero aprende solo recompensa inmediata; permite estudiar el aporte del valor futuro. La variación diferencial mixta, con supervivencia Pareto compartida y asistencia opcional, contrasta el generador genético. Son adaptaciones propias; no se presentan como reproducciones de HIGA, SA-CoDE o qlDE. MCTS y control aprendido de operadores quedan como extensiones.
 
@@ -29,8 +29,6 @@ El autor confirma acero A36, fluencia de 250 MPa y comprobaciones según Eurocó
 En B, una población persistente produce propuestas mixtas de cruce y mutación. RL selecciona antes de consultar; el resultado actualiza supervivencia y archivo. La variante asistida y greedy usan un predictor auxiliar, con sus costos contabilizados. Los modelos de evaluación no aprenden de sus propias predicciones como si fueran nuevas mediciones.
 
 La investigación sigue siendo exploratoria: prueba ya fue examinada y solo existe una trayectoria estructural. Las semillas permiten medir variación del procedimiento, no generalización entre problemas estructurales independientes. La nueva partición no elimina el conocimiento previo de prueba.
-
-El contrato activo y sus límites están en [SCOPE.md](docs/SCOPE.md), los comandos manuales en [ejecucion.md](docs/ejecucion.md) y las decisiones de implementación en el [plan](docs/plan_busqueda_evolutiva_rl.md). Los entrenamientos y comandos pesados los ejecuta el autor.
 
 ## Qué aporta la literatura
 

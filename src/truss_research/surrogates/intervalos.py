@@ -53,8 +53,8 @@ def export_intervals(
     identifiers = table.iter_id.to_dict()
     intervals["iter_id"] = intervals.row_index.map(identifiers)
     intervals["web_config"] = intervals.row_index.map(table.web_config.to_dict())
+    from truss_research.datos.distancias import distance_regions
     from truss_research.datos.procesados import load_design_split
-    from truss_research.evaluacion.auditoria_estudio import nearest_designs
     from truss_research.surrogates.experimentos import read_run
 
     run_path = source / "run.json"
@@ -62,9 +62,12 @@ def export_intervals(
         training = load_design_split(
             Path(str(read_run(source)["config"]["data_dir"]))
         ).training
-        distances, _ = nearest_designs(TableSplit(training, table, table))
-        regions = (
-            distances.drop_duplicates("iter_id").set_index("iter_id").distance_region
+        regions = pd.Series(
+            distance_regions(
+                training.loc[:, list(INPUT_COLUMNS)].to_numpy(dtype=float),
+                table.loc[:, list(INPUT_COLUMNS)].to_numpy(dtype=float),
+            ),
+            index=table.iter_id,
         )
         intervals["distance_region"] = intervals.iter_id.map(regions)
     intervals.to_csv(destination / "prediction_intervals.csv", index=False)

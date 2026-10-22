@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -242,16 +243,24 @@ def test_cli_reports_missing_source(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    not DEFAULT_SOURCE.exists(), reason="Excel local no distribuido en Git"
+    os.getenv("TRUSS_REAL_DATA_TEST") != "1" or not DEFAULT_SOURCE.exists(),
+    reason="Integración optativa con el Excel autorizado; no se prepara por defecto",
 )
 def test_real_dataset(tmp_path: Path) -> None:
-    result = prepare_dataset(PreparationConfig(destination=tmp_path / "processed"))
+    result = prepare_dataset(
+        PreparationConfig(
+            destination=tmp_path / "processed",
+            split=SplitConfig(protocol="first_appearance"),
+            calibration_fraction=0.2,
+        )
+    )
     assert len(result.table) == 1273
-    assert [len(table) for table in result.split.as_mapping().values()] == [
-        1018,
-        127,
-        128,
-    ]
+    assert {name: len(table) for name, table in result.split.as_mapping().items()} == {
+        "train": 901,
+        "calibration": 166,
+        "validation": 98,
+        "test": 108,
+    }
     assert not result.table["meets_z_threshold"].all()
 
 

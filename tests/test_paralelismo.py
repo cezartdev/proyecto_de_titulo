@@ -41,17 +41,13 @@ def tiny_parallel_config(data: Path, destination: Path) -> StudyConfig:
         outer_folds=2,
         inner_folds=2,
         trials=0,
-        catalog_size=4,
-        budgets=(3,),
-        episodes_per_seed=1,
+        budgets=(9,),
         rl_steps=4,
         rl_batch=2,
         rl_warmup=2,
         rl_hidden=8,
         validation_interval=2,
-        background_size=2,
-        permutation_rounds=1,
-        analysis=AnalysisParameters(catalog_sizes=(4, 8), bootstrap_repeats=10),
+        analysis=AnalysisParameters(bootstrap_repeats=10),
         execution=ExecutionParameters(cpu_workers=2),
     )
 
@@ -77,10 +73,10 @@ def test_pool_interruption_terminates_spawned_workers(tmp_path: Path) -> None:
 
 
 def test_failed_search_resume_preserves_completed_folds(
-    design_data: Path, tmp_path: Path
+    prepared_temporal: Path, tmp_path: Path
 ) -> None:
     config = replace(
-        tiny_parallel_config(design_data, tmp_path / "study"),
+        tiny_parallel_config(prepared_temporal, tmp_path / "study"),
         models=("ridge",),
         trials=1,
     )
@@ -116,86 +112,24 @@ def test_failed_search_resume_preserves_completed_folds(
     assert resource_inventory(config.output_dir).coverage.eq("complete").all()
 
 
-def test_parallel_study_closure_benchmark_and_relocation(
-    design_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from truss_research.evaluacion import benchmark
-    from truss_research.evaluacion.auditoria_estudio import AuditConfig, audit_study
-    from truss_research.evaluacion.informe_estudio import summarize_study
-    from truss_research.evaluacion.recursos import MeasurementParameters
-    from truss_research.evaluacion.sensibilidad import run_sensitivity
-
-    exports = tmp_path / "exports"
-    monkeypatch.setattr(benchmark, "benchmark_export_root", lambda study: exports)
-    config = replace(
-        tiny_parallel_config(design_data, tmp_path / "study"),
-        measurement=MeasurementParameters(
-            warmup=0, inference_repeats=1, selection_repeats=1, batch_sizes=(1, 4, 8)
-        ),
-    )
-    run_study(config, "validacion")
-    moved = tmp_path / "relocated"
-    config.output_dir.rename(moved)
-    config = load_study_config(moved)
-    run_study(config, "todo", True)
-    state = read_artifact(moved / "study.json")
-    assert state["execution_runs"][-1]["phase"] == "todo"
-    assert state["execution_runs"][-1]["status"] == "complete"
-    frozen = read_artifact(moved / "freeze.json")
-    assert set(
-        task["key"]
-        for task in state["preparation_tasks"]
-        if not task["key"].startswith("test/")
-    ) <= set(frozen["artifacts"])
-    before = artifact_signatures(moved)
-    sensitivity = run_sensitivity(moved, tmp_path / "sensitivity")
-    assert (sensitivity / "catalog_summary.csv").is_file()
-    result = benchmark.run_benchmark(moved, exports / "benchmark_001")
-    report = summarize_study(moved, tmp_path / "report")
-    audit_study(AuditConfig(moved, config.data_dir, tmp_path / "audit"))
-    assert artifact_signatures(moved) == before
-    resources = resource_inventory(moved)
-    assert resources.coverage.eq("complete").all()
-    jobs = pd.read_csv(result / "worker_jobs.csv")
-    assert (
-        len(jobs) == len(state["tasks"]) + len(state["preparation_tasks"])
-        and jobs.success.all()
-    )
-    costs = pd.read_csv(result / "research_cost.csv")
-    assert costs.campaign_wall_seconds.iloc[0] == pytest.approx(
-        sum(run["wall_seconds"] for run in state["execution_runs"])
-    )
-    effective = pd.read_csv(report / "effective_costs.csv")
-    task_seconds = sum(
-        task["seconds"] for task in [*state["tasks"], *state["preparation_tasks"]]
-    )
-    assert effective.loc[
-        effective.phase.eq("task_wall_seconds"), "seconds"
-    ].sum() == pytest.approx(task_seconds)
-
-
 def test_parallel_families_and_folds_match_serial_and_resume(
-    design_data: Path, tmp_path: Path
+    prepared_temporal: Path, tmp_path: Path
 ) -> None:
     config = StudyConfig(
         tmp_path / "serial",
-        data_dir=design_data,
+        data_dir=prepared_temporal,
         models=("ridge", "random_forest"),
         seeds=(42, 43),
         outer_folds=2,
         inner_folds=2,
         trials=1,
-        catalog_size=4,
-        budgets=(2, 3),
-        episodes_per_seed=1,
+        budgets=(9, 11),
         rl_steps=4,
         rl_batch=2,
         rl_warmup=2,
         rl_hidden=8,
         validation_interval=2,
-        background_size=2,
-        permutation_rounds=1,
-        analysis=AnalysisParameters(catalog_sizes=(4, 8), bootstrap_repeats=10),
+        analysis=AnalysisParameters(bootstrap_repeats=10),
     )
     run_study(config, "predictores")
     parallel = replace(
@@ -279,10 +213,10 @@ def test_execution_workers_require_positive_integer(workers: int | float) -> Non
 
 
 def test_all_cpu_families_support_parallel_plain_crossfit(
-    design_data: Path, tmp_path: Path
+    prepared_temporal: Path, tmp_path: Path
 ) -> None:
     config = replace(
-        tiny_parallel_config(design_data, tmp_path / "study"),
+        tiny_parallel_config(prepared_temporal, tmp_path / "study"),
         models=tuple(name for name in MODEL_NAMES if name != "tabpfn"),
         inner_folds=None,
         parameters=ModelParameters(
@@ -303,7 +237,7 @@ def test_all_cpu_families_support_parallel_plain_crossfit(
     reference = tmp_path / "reference"
     train_predictor(
         PredictorConfig(
-            design_data,
+            prepared_temporal,
             reference,
             model="ridge",
             folds=2,

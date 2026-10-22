@@ -12,13 +12,15 @@ El objetivo principal es comparar regresores de masa, utilización promedio y de
 
 La evaluación principal es temporal y exploratoria. La preparación vigente contiene 901 diseños de ajuste, 166 de calibración, 98 de validación y 108 de prueba; prueba solo representa las topologías 1 y 2. Estos conteos describen la preparación existente y deben comprobarse en su manifiesto. La sensibilidad por diseños únicos estudia interpolación en la misma fuente, no constituye nueva evidencia externa.
 
+SHAP aporta interpretabilidad complementaria sobre los modelos ya ajustados: referencia de entrenamiento, casos comunes de validación y atribuciones en unidades originales. Su etapa independiente, manual o incluida en el recorrido completo, no interviene en la selección por HV/AUC. Los métodos específicos por familia y los componentes Targetwise declaran sus supuestos; CUDA se usa para las inferencias TabPFN durante permutaciones. El piloto mide costos y las semillas adicionales de la familia ganadora son configurables. Las atribuciones describen predicciones, sin acreditar causalidad física ni seguridad estructural.
+
 El control de bandido contextual usa el mismo estado y capacidad que Double DQN, pero aprende solo recompensa inmediata; permite estudiar el aporte del valor futuro. La variación diferencial mixta, con supervivencia Pareto compartida y asistencia opcional, contrasta el generador genético. Son adaptaciones propias; no se presentan como reproducciones de HIGA, SA-CoDE o qlDE. MCTS y control aprendido de operadores quedan como extensiones.
 
 Se distinguen recuperación retrospectiva A, con respuestas registradas y proyección explícita, y generación B, con configuraciones nuevas y evaluación predictiva congelada. La secuencia de RL es la de sus propias decisiones y consultas; no se imita una trayectoria de padres y operadores originales que no está registrada.
 
 ## Datos y decisiones de enfoque
 
-El Excel contiene 5.000 apariciones de una corrida de 100 generaciones y 50 individuos por generación. La auditoría previa identificó 1.273 diseños únicos y 3.727 repeticiones, asociadas a elitismo y convergencia. Estos conteos no fijan el tamaño de los nuevos bloques temporales.
+El Excel contiene 5.000 apariciones de una corrida de 100 generaciones y 50 individuos por generación. La auditoría identificó 1.273 diseños únicos y 3.727 repeticiones. El elitismo y la convergencia son explicaciones compatibles con esas repeticiones; confirmar su mecanismo requiere el algoritmo original y sus reglas de supervivencia. Estos conteos no fijan el tamaño de los nuevos bloques temporales.
 
 La generación representa el ciclo evolutivo. El índice de solución identifica un individuo de la población, sin demostrar orden de evaluación ni relación de descendencia. Una repetición no prueba otra llamada FEM. Se conservan los eventos poblacionales para estudiar convergencia y un ejemplo por diseño exacto para regresión; la frecuencia de supervivencia no pondera el ajuste.
 
@@ -80,13 +82,9 @@ Los criterios declarados en el informe son:
 
 La elegibilidad de los artículos se mantiene sin cambios. Sigue pendiente justificar la inclusión de TSO-GCN, centrado en 3D, frente al criterio de cerchas 2D.
 
-## Antecedentes del repositorio
+## Versión operativa
 
-El estudio 01 completó 205 tareas. XGBoost fue seleccionado por validación, con MAE normalizado medio 0,07291; en prueba obtuvo 0,07569, frente a 0,07410 de CatBoost. Greedy superó en AUC medio a RL en los tres presupuestos y la ablación no mostró ventaja consistente de incorporar predicciones.
-
-Son antecedentes de un protocolo con búsqueda repetida por semilla y OOF cuyos hiperparámetros se elegían antes con todo entrenamiento. Compartía los tres objetivos actuales, pero usaba presupuestos 5/10/20. No se mezclan sus métricas con la campaña anidada actual. Las comprobaciones intermedias de dos objetivos quedaron descartadas y sus métricas no son evidencia de tesis.
-
-Los formatos históricos se retiraron del flujo activo. Esta síntesis no sustituye sus artefactos para reconstruir resultados. El conocimiento previo de prueba permanece aunque se borren las ejecuciones.
+La campaña vigente usa exclusivamente primera aparición temporal y tres objetivos, con presupuestos 32/64/96. No se mantienen rutas de ejecución ni migraciones del protocolo de catálogos retirado. Los resultados anteriores no se mezclan con la nueva campaña. El conocimiento previo de prueba permanece aunque se retire su implementación.
 
 ## Referencias consultadas
 

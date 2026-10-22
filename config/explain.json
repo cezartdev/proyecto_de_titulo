@@ -1,0 +1,11 @@
+{
+  "background_size": 100,
+  "permutation_rounds": 10,
+  "batch_size": 128,
+  "winner_seeds": false,
+  "pilot": {
+    "background_size": 10,
+    "permutation_rounds": 1,
+    "evaluation_limit": 5
+  }
+}

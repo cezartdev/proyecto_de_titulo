@@ -3,7 +3,6 @@
 import json
 import shutil
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -13,19 +12,9 @@ from sklearn.pipeline import Pipeline
 from truss_research.__main__ import main
 from truss_research.datos.artefactos import dataset_identity, read_artifact
 from truss_research.datos.procesados import load_design_split
-from truss_research.evaluacion.auditoria_estudio import (
-    AuditConfig,
-    audit_study,
-    nearest_designs,
-)
-from truss_research.evaluacion.informe_estudio import (
-    latest_study_report,
-    read_object,
-)
-from truss_research.optimizacion.estudio import run_study
-from truss_research.optimizacion.estudio_estado import StudyConfig, load_study_config
+from truss_research.optimizacion.estudio_estado import StudyConfig
 from truss_research.optimizacion.protocolo import load_protocol, study_plan
-from truss_research.surrogates.configuracion import ModelParameters, PredictorConfig
+from truss_research.surrogates.configuracion import PredictorConfig
 from truss_research.surrogates.experimentos import write_json
 from truss_research.surrogates.validacion import nested_cross_fitted
 
@@ -96,18 +85,16 @@ def test_plan_without_data_or_training(
     )
     assert main() == 0
     result = json.loads(capsys.readouterr().out)
-    assert result["total_tasks"] == 297
-    assert result["tuning_trials"] == 240
-    assert result["nested_additional_trials"] == 1200
+    assert result["primary_component"] == "predictor_comparison"
+    assert result["policy_transitions"] == 1_000_000
     assert result["execution"]["numeric_threads_per_worker"] == 1
-    assert result["execution"]["nested_pools"] is False
     assert not target.exists()
 
 
 def test_profiles_and_unknown_settings(tmp_path: Path) -> None:
     locations = (tmp_path / "study", tmp_path / "data")
     full = load_protocol(Path("config/study.json"), locations)
-    assert full.label == "posterior" and full.budgets == (32, 64, 128)
+    assert full.label == "posterior" and full.budgets == (32, 64, 96)
     assert full.experiment == "evolution" and full.split_protocol == "first_appearance"
     smoke = load_protocol(Path("config/smoke.json"), locations)
     assert smoke.label == "comprobacion" and smoke.rl_steps == 100
@@ -115,7 +102,7 @@ def test_profiles_and_unknown_settings(tmp_path: Path) -> None:
         full.execution.cpu_workers in (4, 6, 8, 12) and smoke.execution.cpu_workers == 2
     )
     nested = load_protocol(Path("config/study.json"), locations)
-    assert nested.nested_folds == 3 and nested.catalog_size == 32
+    assert nested.nested_folds == 3
     assert nested.label == "posterior"
     final_plan = json.loads(study_plan(nested, "final"))
     assert final_plan["policy_transitions"] == 0
@@ -227,83 +214,6 @@ def test_nested_selection_excludes_outer_rows(
     assert len(fitting_ids) == 6
 
 
-def test_relocation_resume_freeze_audit_without_fit(
-    design_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from truss_research.evaluacion import benchmark
-    from truss_research.evaluacion.recursos import MeasurementParameters
-    from truss_research.optimizacion.contratos import AnalysisParameters
-
-    export_root = tmp_path / "benchmarks"
-    monkeypatch.setattr(benchmark, "benchmark_export_root", lambda study: export_root)
-    bundle = tmp_path / "bundle"
-    bundle.mkdir()
-    shutil.copytree(design_data, bundle / "data")
-    config = StudyConfig(
-        bundle / "study",
-        data_dir=bundle / "data",
-        models=("dummy",),
-        seeds=(42,),
-        outer_folds=2,
-        inner_folds=2,
-        trials=0,
-        catalog_size=4,
-        budgets=(2,),
-        episodes_per_seed=1,
-        rl_steps=4,
-        rl_batch=2,
-        rl_warmup=2,
-        rl_hidden=8,
-        validation_interval=2,
-        background_size=2,
-        permutation_rounds=1,
-        parameters=ModelParameters(trees=2),
-        analysis=AnalysisParameters(catalog_sizes=(4, 8), bootstrap_repeats=10),
-        measurement=MeasurementParameters(
-            warmup=0, inference_repeats=1, selection_repeats=1, batch_sizes=(1, 4, 8)
-        ),
-    )
-    run_study(config)
-    frozen = (config.output_dir / "freeze.json").read_bytes()
-    relocated = tmp_path / "new_location"
-    shutil.move(str(bundle), relocated)
-    root = relocated / "study"
-
-    def forbidden_fit(
-        self: Pipeline, features: pd.DataFrame, responses: pd.DataFrame
-    ) -> None:
-        raise AssertionError(
-            "La lectura, reanudación completa y auditoría no ajustan predictores"
-        )
-
-    monkeypatch.setattr(Pipeline, "fit", forbidden_fit)
-    loaded = load_study_config(root)
-    assert loaded.data_dir == relocated / "data"
-    assert latest_study_report(root) is not None
-    run_study(loaded, "todo", True)
-    assert (root / "freeze.json").read_bytes() == frozen
-    benchmark.run_benchmark(root, export_root / "benchmark_001")
-    audit_study(AuditConfig(root, loaded.data_dir, tmp_path / "audit"))
-    assert (tmp_path / "audit/AUDIT.md").is_file()
-    assert (root / "freeze.json").read_bytes() == frozen
-
-
-def test_proximity_transformer_uses_training_only(design_data: Path) -> None:
-    split = load_design_split(design_data)
-    first, thresholds = nearest_designs(split)
-    changed = replace(split, validation=split.validation.copy())
-    changed.validation.loc[:, "lr_height_m"] += 100
-    second, other_thresholds = nearest_designs(changed)
-    assert thresholds == other_thresholds
-    pd.testing.assert_frame_equal(
-        first.loc[first["split"].eq("test")], second.loc[second["split"].eq("test")]
-    )
-    assert (
-        second.loc[second["split"].eq("validation"), "distance"].min()
-        > first["distance"].max()
-    )
-
-
 def test_relative_manifest_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "run.json"
     payload = {
@@ -313,55 +223,3 @@ def test_relative_manifest_roundtrip(tmp_path: Path) -> None:
     write_json(path, payload)
     assert str(tmp_path) not in path.read_text(encoding="utf-8")
     assert read_artifact(path) == payload
-
-
-def test_interrupted_policy_resumes_after_relocation(
-    design_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import truss_research.optimizacion.entrenamiento as training
-
-    bundle = tmp_path / "interrupted_bundle"
-    bundle.mkdir()
-    shutil.copytree(design_data, bundle / "data")
-    config = StudyConfig(
-        bundle / "study",
-        data_dir=bundle / "data",
-        models=("dummy",),
-        seeds=(42,),
-        outer_folds=2,
-        trials=0,
-        catalog_size=4,
-        budgets=(2,),
-        episodes_per_seed=1,
-        rl_steps=4,
-        rl_batch=2,
-        rl_warmup=2,
-        rl_hidden=8,
-        validation_interval=2,
-        background_size=2,
-        permutation_rounds=1,
-    )
-    save = training.save_policy_run
-
-    def interrupt(
-        run: training.PolicyRun, checkpoint: training.TorchRLCheckpoint
-    ) -> None:
-        save(run, checkpoint)
-        if run.config.use_predictions and checkpoint.step == 2:
-            raise RuntimeError("Interrupción de prueba tras checkpoint firmado")
-
-    monkeypatch.setattr(training, "save_policy_run", interrupt)
-    with pytest.raises(RuntimeError, match="tareas fallidas"):
-        run_study(config, "validacion")
-    monkeypatch.setattr(training, "save_policy_run", save)
-    relocated = tmp_path / "resumed_bundle"
-    shutil.move(str(bundle), relocated)
-    root = relocated / "study"
-    run_study(load_study_config(root), "validacion", True)
-    state = read_object(root / "study.json")
-    record = next(task for task in state["tasks"] if task["key"] == "policy/rl/42")
-    assert record["status"] == "complete" and len(record["attempts"]) == 2
-    run = read_object(Path(record["directory"]) / "run.json")
-    assert run["completed_steps"] == 4
-    assert run["config"]["resume_dir"] == record["attempts"][0]
-    assert not state["test_started"]

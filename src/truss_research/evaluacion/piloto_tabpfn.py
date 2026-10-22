@@ -19,7 +19,6 @@ from truss_research.datos.procesados import JsonValue, load_design_split
 from truss_research.datos.subconjuntos import nested_subsets
 from truss_research.evaluacion.costos import machine_context
 from truss_research.evaluacion.recursos import ResourceMonitor
-from truss_research.optimizacion.compatibilidad_ejecucion import compatible_sources
 from truss_research.optimizacion.estudio_estado import (
     StudyConfig,
     artifact_signatures,
@@ -121,7 +120,12 @@ def execute_pilot(config: StudyConfig, destination: Path) -> None:
     import gc
 
     split = load_design_split(config.data_dir)
-    sizes = tuple(sorted(set(min(size, len(split.training)) for size in PILOT_SIZES)))
+    sizes = tuple(
+        sorted(
+            {min(size, len(split.training)) for size in PILOT_SIZES}
+            | {len(split.training)}
+        )
+    )
     subsets = nested_subsets(split.training, sizes, config.representative_seed)
     rows = []
     for size in sizes:
@@ -306,20 +310,10 @@ def require_pilot(config: StudyConfig) -> dict[str, JsonValue]:
     verify_tabpfn(config.tabpfn)
     root = config.tabpfn.checkpoint.parent / "pilots"
     identity = pilot_identity(config)
-    sources = (
-        identity["source_signature"],
-        *compatible_sources(str(identity["source_signature"])),
-    )
     for path in sorted(root.glob("pilot_*/pilot.json"), reverse=True):
         saved = read_artifact(path)
-        if (
-            saved.get("status") == "complete"
-            and all(
-                saved.get(key) == value
-                for key, value in identity.items()
-                if key != "source_signature"
-            )
-            and saved.get("source_signature") in sources
+        if saved.get("status") == "complete" and all(
+            saved.get(key) == value for key, value in identity.items()
         ):
             measured = {
                 name: digest

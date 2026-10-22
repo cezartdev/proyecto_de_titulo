@@ -75,9 +75,7 @@ def run_interpolation(config: StudyConfig, source: Path) -> Path:
     if root.exists():
         raise ValueError("La sensibilidad requiere un destino nuevo")
     models = tuple(
-        name
-        for name in config.analysis.generalization.control_models
-        if name in config.models
+        name for name in config.analysis.interpolation_models if name in config.models
     )
     if len(models) < 2:
         raise ValueError("La sensibilidad requiere al menos dos familias de control")

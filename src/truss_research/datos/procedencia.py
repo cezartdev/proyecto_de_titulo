@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Literal
 
 CONFIRMED_SOURCE = (
-    "docs/SCOPE.md; respuesta de la profesora y aclaraciones del autor "
-    "registradas el 2026-10-19"
+    "Registro histórico de respuesta de la profesora y aclaraciones del autor "
+    "del 2026-10-19; referencia original docs/SCOPE.md no disponible en este "
+    "checkout. Este registro no sustituye la evidencia original."
 )
 CONFIRMED_DATE = "2026-10-19"
 
@@ -132,16 +133,16 @@ DEFAULT_CONFIRMATIONS: tuple[PhysicalConfirmation, ...] = (
         "confirmed",
         CONFIRMED_SOURCE,
         CONFIRMED_DATE,
-        "100 generaciones sucesivas (0 a 99) de carácter evolutivo, generadas por un algoritmo evolutivo poblacional con 50 soluciones por generación (0 a 49), totalizando 5.000 exploraciones. Cada generación evalúa 50 propuestas orientadas a mejorar diseños previos mediante operadores evolutivos (pudiendo mejorar, igualar o empeorar); no existe un diseño base.",
-        "No interpretar la solución 0 como diseño base ni generaciones como problemas independientes.",
+        "100 generaciones sucesivas (0 a 99), con 50 apariciones poblacionales por generación (0 a 49), totalizando 5.000 registros. El origen evolutivo fue informado por las fuentes humanas; el Excel no registra padres, operadores ni llamadas FEM nuevas. El identificador {0;0} no establece un diseño base.",
+        "No interpretar la solución 0 como diseño base ni generaciones como problemas independientes. Obtener el algoritmo y sus registros para confirmar cruce, mutación y número de evaluaciones FEM.",
     ),
     PhysicalConfirmation(
         "Selección previa de soluciones",
         "confirmed",
         CONFIRMED_SOURCE,
         CONFIRMED_DATE,
-        "5.000 exploraciones con 1.273 diseños únicos. Los 3.727 repetidos provienen de la dinámica generacional de 50 consultas por lote, donde el elitismo y la convergencia de la población replican soluciones exitosas.",
-        "Conservar relación de pertenencias y no asumir independencia estadística entre individuos de generaciones contiguas.",
+        "5.000 apariciones con 1.273 diseños únicos y 3.727 repeticiones. El elitismo y la convergencia son explicaciones compatibles con la trayectoria observada; los conteos no confirman sus mecanismos ni implican consultas FEM repetidas.",
+        "Conservar relación de pertenencias, obtener las reglas originales de supervivencia y no asumir independencia estadística entre individuos de generaciones contiguas.",
     ),
     PhysicalConfirmation(
         "`web_config`",

@@ -49,7 +49,7 @@ BASE_MODEL_NAMES: Final[tuple[ModelName, ...]] = tuple(
     n for n in MODEL_NAMES if n != "targetwise"
 )
 
-SCHEMA_VERSION: Final[int] = 8
+SCHEMA_VERSION: Final[int] = 9
 
 DEFAULT_FOLDS: Final[int] = 5
 
@@ -138,8 +138,6 @@ class PredictorConfig:
     final_tuning_folds: int | None = None
     candidate_models: tuple[ModelName, ...] = BASE_MODEL_NAMES
     target_index: int | None = None
-    group_membership: Path | None = None
-    cv_protocol: Literal["design", "chronological"] = "design"
     tabpfn: TabPFNParameters = field(default_factory=TabPFNParameters)
     device: str = "cpu"
     pruning: PruningParameters = field(default_factory=PruningParameters)
@@ -153,14 +151,6 @@ class PredictorConfig:
             raise ValueError("Cantidades de árboles para reajuste inválidas")
         if self.device not in ("cpu", "cuda"):
             raise ValueError("El dispositivo predictivo debe ser cpu o cuda")
-        if self.cv_protocol not in ("design", "chronological"):
-            raise ValueError("Protocolo de validación desconocido")
-        if self.cv_protocol == "chronological" and self.group_membership is None:
-            raise ValueError("La validación temporal requiere pertenencias completas")
-        if self.cv_protocol not in ("design", "chronological"):
-            raise ValueError("Protocolo de validación desconocido")
-        if self.cv_protocol == "chronological" and self.group_membership is None:
-            raise ValueError("La validación temporal requiere pertenencias completas")
         if not self.candidate_models or any(
             n not in BASE_MODEL_NAMES for n in self.candidate_models
         ):

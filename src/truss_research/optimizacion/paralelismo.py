@@ -10,7 +10,6 @@ from typing import Literal
 from truss_research.datos.artefactos import read_artifact
 from truss_research.datos.preparacion import source_digest
 from truss_research.evaluacion.registro import attempt_logs
-from truss_research.optimizacion.contratos import StudyTask
 from truss_research.optimizacion.ejecucion_cpu import (
     CpuPool,
     MemoryAdmission,
@@ -36,39 +35,22 @@ logger = logging.getLogger(__name__)
 def uses_gpu(session: StudySession, node: "JobNode") -> bool:
     if session.gpu_executor is None:
         return False
-    if node.kind == "policy":
-        return session.config.execution.rl_device == "cuda"
-    if node.kind in ("block", "decision"):
-        return False
     tabpfn_gpu = (
         session.config.tabpfn_enabled and session.config.tabpfn.device == "cuda"
     )
     return node.model in session.config.execution.gpu_models or (
-        tabpfn_gpu and (node.model in ("tabpfn", "targetwise") or node.kind == "bank")
+        tabpfn_gpu and (node.model in ("tabpfn", "targetwise"))
     )
 
 
 @dataclass(frozen=True)
 class JobNode:
     key: str
-    kind: Literal[
-        "search",
-        "fold",
-        "predictor",
-        "policy",
-        "explain",
-        "ranking",
-        "test_predictor",
-        "bank",
-        "block",
-        "decision",
-    ]
+    kind: Literal["search", "fold", "predictor"]
     model: ModelName
     seed: int
     dependencies: tuple[str, ...] = ()
     fold: int = 0
-    task: StudyTask | None = None
-    indices: tuple[int, ...] = ()
 
 
 def prediction_graph(session: StudySession) -> tuple[JobNode, ...]:
@@ -104,9 +86,7 @@ def prediction_graph(session: StudySession) -> tuple[JobNode, ...]:
 
 def node_record(session: StudySession, node: JobNode) -> TaskRecord:
     records = (
-        session.preparation_tasks
-        if node.kind in ("search", "fold", "bank", "block")
-        else session.tasks
+        session.preparation_tasks if node.kind in ("search", "fold") else session.tasks
     )
     return records.setdefault(node.key, TaskRecord(node.key))
 
@@ -119,9 +99,7 @@ def begin_attempt(session: StudySession, node: JobNode) -> Path:
             snapshot = read_artifact(path)
             record.seconds += float(snapshot["phases"][0]["wall_seconds"])
             record.measurement_signatures[str(path)] = source_digest(path)
-    root = (
-        "preparation" if node.kind in ("search", "fold", "bank", "block") else "tasks"
-    )
+    root = "preparation" if node.kind in ("search", "fold") else "tasks"
     destination = (
         session.config.output_dir
         / root
@@ -234,18 +212,7 @@ def schedule_ready(
         for node in pending
         if all(lookup[key].status == "complete" for key in node.dependencies)
     ]
-    priority = {
-        "search": 0,
-        "fold": 0,
-        "bank": 0,
-        "policy": 0,
-        "predictor": 1,
-        "explain": 2,
-        "ranking": 3,
-        "test_predictor": 1,
-        "block": 1,
-        "decision": 4,
-    }
+    priority = {"search": 0, "fold": 0, "predictor": 1}
     ready.sort(key=lambda node: (priority[node.kind], node.key))
     if session.telemetry is not None:
         session.telemetry.update(
@@ -255,8 +222,6 @@ def schedule_ready(
     def uses_tabpfn(node: JobNode) -> bool:
         if not session.config.tabpfn_enabled:
             return False
-        if node.kind in ("bank",):
-            return True
         return node.model in ("tabpfn", "targetwise")
 
     tabpfn_active = any(uses_tabpfn(node) for node in active.values())
@@ -279,13 +244,7 @@ def schedule_ready(
         available -= 1
     for node in admitted:
         target = session.gpu_executor if uses_gpu(session, node) else executor
-        if node.kind in ("search", "fold", "predictor"):
-            future = target.submit(run_predictor_job, start_node(session, node))
-        else:
-            from truss_research.optimizacion.etapas_cpu import start_study_node
-            from truss_research.optimizacion.trabajos_estudio import run_study_job
-
-            future = target.submit(run_study_job, start_study_node(session, node))
+        future = target.submit(run_predictor_job, start_node(session, node))
         active[future] = node
         pending.remove(node)
     if session.telemetry is not None:

@@ -192,8 +192,6 @@ def build_context(config: StudyConfig, paths: tuple[Path, Path]) -> SearchContex
     features = training[list(INPUT_COLUMNS)].to_numpy(dtype=float)
     responses = training[list(OUTPUT_COLUMNS)].to_numpy(dtype=float)
     space = ObjectiveSpace.fit(responses, config.limits)
-    if config.objective_mode == "mass_displacement":
-        space = replace(space, active_dimensions=(0, 2))
     metadata = read_run(winner)
     members = tuple(winner / name for name in sorted(metadata["fold_model_signatures"]))
     if len(members) < 2:

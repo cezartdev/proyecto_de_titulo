@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from truss_research.optimizacion.estudio_estado import StudyConfig
 
-DEFAULT_STUDY = Path("artifacts/evolucion")
+from truss_research import DEFAULT_STUDY
 
 DEFAULT_PROTOCOL = Path("config/study.json")
 SMOKE_PROTOCOL = Path("config/smoke.json")
@@ -121,15 +121,6 @@ def run_study_command(args: argparse.Namespace) -> None:
 
 def next_export(study: Path, name: str) -> Path:
     root = results_root(study)
-    if name in ("sensibilidad", "curvas"):
-        incomplete = [
-            path
-            for path in sorted(root.glob(name + "_*"), reverse=True)
-            if (path / "analysis_session.json").is_file()
-            and not (path / "provenance.json").exists()
-        ]
-        if incomplete:
-            return incomplete[0]
     numbers = [
         int(path.name.removeprefix(name + "_"))
         for path in root.glob(name + "_*")
@@ -213,25 +204,20 @@ def run_smoke_command(args: argparse.Namespace) -> None:
     if args.solo_dummy:
         config = replace(
             config,
-            models=("dummy", "ridge")
-            if config.experiment == "evolution"
-            else ("dummy",),
+            models=("dummy", "ridge"),
         )
     logging.getLogger(__name__).info("Comprobación: %s", config.output_dir)
     run_study(
         config,
-        "validacion" if config.experiment == "evolution" else "todo",
+        "validacion",
         (config.output_dir / "study.json").is_file(),
     )
 
 
 def export_evolution_command(args: argparse.Namespace, kind: str) -> bool:
     from truss_research.evaluacion.informe_busqueda import export_search
-    from truss_research.optimizacion.estudio_estado import load_study_config
 
     study = args.estudio or DEFAULT_STUDY
-    if load_study_config(study).experiment != "evolution":
-        return False
     destination = args.destino or next_export(
         study, "presentacion" if kind == "notebooks" else kind
     )
@@ -240,81 +226,19 @@ def export_evolution_command(args: argparse.Namespace, kind: str) -> bool:
 
 
 def run_summary_command(args: argparse.Namespace) -> None:
-    if export_evolution_command(args, "informe"):
-        return
-    from truss_research.evaluacion.informe_estudio import summarize_study
-
-    summarize_study(args.estudio, args.destino or next_export(args.estudio, "informe"))
+    export_evolution_command(args, "informe")
 
 
 def run_audit_command(args: argparse.Namespace) -> None:
-    if export_evolution_command(args, "auditoria"):
-        return
-    from truss_research.evaluacion.auditoria_estudio import AuditConfig, audit_study
-    from truss_research.optimizacion.estudio_estado import load_study_config
-
-    data_dir = args.datos or load_study_config(args.estudio).data_dir
-    audit_study(
-        AuditConfig(
-            args.estudio,
-            data_dir,
-            args.destino or next_export(args.estudio, "auditoria"),
-        )
-    )
+    export_evolution_command(args, "auditoria")
 
 
 def run_notebooks_command(args: argparse.Namespace) -> None:
-    if export_evolution_command(args, "notebooks"):
-        return
-    from truss_research.evaluacion.presentacion import export_notebooks, resolve_study
-
-    study = resolve_study(args.estudio)
-    destination = args.destino or next_export(study, "presentacion")
-    print(export_notebooks(study, destination))
-
-
-def run_sensitivity_command(args: argparse.Namespace) -> None:
-    from truss_research.optimizacion.estudio_estado import load_study_config
-
-    if load_study_config(args.estudio).experiment == "evolution":
-        raise ValueError(
-            "La busqueda A/B se ejecuta mediante make study y make final; esta etapa pertenece al protocolo de catalogo anterior"
-        )
-    from truss_research.evaluacion.sensibilidad import run_sensitivity
-
-    print(
-        run_sensitivity(
-            args.estudio, args.destino or next_export(args.estudio, "sensibilidad")
-        )
-    )
+    export_evolution_command(args, "notebooks")
 
 
 def run_benchmark_command(args: argparse.Namespace) -> None:
-    if export_evolution_command(args, "benchmark"):
-        return
-    from truss_research.evaluacion.benchmark import run_benchmark
-
-    print(
-        run_benchmark(
-            args.estudio, args.destino or next_export(args.estudio, "benchmark")
-        )
-    )
-
-
-def run_learning_command(args: argparse.Namespace) -> None:
-    from truss_research.optimizacion.estudio_estado import load_study_config
-
-    if load_study_config(args.estudio).experiment == "evolution":
-        raise ValueError(
-            "La busqueda A/B se ejecuta mediante make study y make final; esta etapa pertenece al protocolo de catalogo anterior"
-        )
-    from truss_research.evaluacion.curvas_aprendizaje import run_learning_curves
-
-    print(
-        run_learning_curves(
-            args.estudio, args.destino or next_export(args.estudio, "curvas")
-        )
-    )
+    export_evolution_command(args, "benchmark")
 
 
 def run_tabpfn_command(args: argparse.Namespace) -> None:
@@ -347,48 +271,36 @@ def run_tabpfn_command(args: argparse.Namespace) -> None:
     print(run_pilot(config, root / f"pilot_{max(numbers, default=0) + 1:03d}"))
 
 
-def run_adaptive_command(args: argparse.Namespace) -> None:
-    from truss_research.optimizacion.estudio_estado import load_study_config
-
-    if load_study_config(args.estudio).experiment == "evolution":
-        raise ValueError(
-            "La busqueda A/B se ejecuta mediante make study y make final; esta etapa pertenece al protocolo de catalogo anterior"
-        )
-    from truss_research.evaluacion.seleccion_adaptativa import (
-        AdaptiveParameters,
-        run_adaptive_selection,
-    )
-    from truss_research.optimizacion.estudio_estado import load_study_config
-
-    config = load_study_config(args.estudio)
-
-    print(
-        run_adaptive_selection(
-            args.estudio,
-            args.destino or next_export(args.estudio, "adaptativa"),
-            AdaptiveParameters(
-                beta=config.adaptive.beta,
-                online_residual=config.adaptive.online_residual,
-                cpu_workers=args.cpu_workers,
-            ),
-        )
-    )
-
-
 def run_jupyter_command(args: argparse.Namespace) -> None:
-    from truss_research.evaluacion.presentacion import resolve_study
+    from truss_research.datos.artefactos import read_artifact
+    from truss_research.evaluacion.presentacion import (
+        resolve_study,
+        verify_presentation_report,
+    )
     from truss_research.optimizacion.estudio_estado import load_study_config
 
     study = resolve_study(args.estudio or DEFAULT_STUDY)
-    notebook_directory = Path("notebooks")
-    if load_study_config(study).experiment == "evolution":
-        candidates = sorted(results_root(study).glob("presentacion_[0-9][0-9][0-9]"))
-        if not candidates:
-            raise ValueError(
-                "Ejecutar make notebooks antes de abrir la presentación evolutiva"
-            )
-        notebook_directory = candidates[-1]
-    environment = {**os.environ, "TRUSS_STUDY": str(study)}
+    if load_study_config(study).experiment != "evolution":
+        raise ValueError(
+            "La presentación canónica requiere el protocolo evolution vigente"
+        )
+    candidates = [
+        path
+        for path in sorted(results_root(study).glob("presentacion_[0-9][0-9][0-9]"))
+        if (path / "provenance.json").is_file()
+        and read_artifact(path / "provenance.json").get("presentation_complete") is True
+    ]
+    if not candidates:
+        raise ValueError(
+            "Completar make notebooks antes de abrir la presentación evolutiva"
+        )
+    notebook_directory = candidates[-1]
+    verify_presentation_report(study, notebook_directory)
+    environment = {
+        **os.environ,
+        "TRUSS_STUDY": str(study),
+        "TRUSS_REPORT": str(notebook_directory.resolve()),
+    }
     result = subprocess.run(
         [sys.executable, "-m", "jupyter", "lab", str(notebook_directory)],
         env=environment,
@@ -470,10 +382,7 @@ def main() -> int:
         "resumir-estudio": run_summary_command,
         "auditar-estudio": run_audit_command,
         "presentar-notebooks": run_notebooks_command,
-        "analizar-sensibilidad": run_sensitivity_command,
-        "evaluar-curvas": run_learning_command,
         "medir-costos": run_benchmark_command,
-        "evaluar-seleccion-adaptativa": run_adaptive_command,
         "abrir-notebooks": run_jupyter_command,
     }
     for name, handler in handlers.items():
@@ -490,18 +399,10 @@ def main() -> int:
         "resumir-estudio",
         "auditar-estudio",
         "presentar-notebooks",
-        "analizar-sensibilidad",
-        "evaluar-curvas",
         "medir-costos",
-        "evaluar-seleccion-adaptativa",
     ):
         commands.choices[name].add_argument("--destino", type=Path)
     commands.choices["auditar-estudio"].add_argument("--datos", type=Path)
-    commands.choices["evaluar-seleccion-adaptativa"].add_argument(
-        "--cpu-workers",
-        type=int,
-        help="Máximo de procesos para adaptive; omitido hereda el estudio, 1 ejecuta secuencialmente",
-    )
     for command in (
         prepare,
         smoke,

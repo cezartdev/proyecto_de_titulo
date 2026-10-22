@@ -273,19 +273,6 @@ class TargetwiseRegressor(RegressorMixin, BaseEstimator):
                 raise ValueError("Falta procedencia temporal del compuesto")
             for column in ("iter_id", "generation", "first_generation"):
                 table[column] = matched[column].to_numpy()
-        if self.config.group_membership is not None:
-            source = pd.read_csv(
-                self.config.group_membership, float_precision="round_trip"
-            ).drop_duplicates("representative_iter_id")
-            matched = features.merge(
-                source[[*INPUT_COLUMNS, "representative_iter_id"]],
-                on=list(INPUT_COLUMNS),
-                how="left",
-                validate="one_to_one",
-            )
-            if matched.representative_iter_id.isna().any():
-                raise ValueError("Faltan pertenencias del ajuste por respuesta")
-            table["iter_id"] = matched.representative_iter_id.to_numpy()
         self.family_trials_ = 0
         self.family_search_: list[dict[str, JsonValue]] = []
         self.components_: list[tuple[PredictorConfig, Pipeline]] = []

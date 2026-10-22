@@ -13,7 +13,6 @@ dependencies = [
     "scikit-learn>=1.5",
     # Viz tesis
     "matplotlib>=3.9",
-    "seaborn>=0.13",
     # Boosting tabular en CPU
     "lightgbm>=4.5",
     "xgboost>=2.1",
@@ -25,7 +24,6 @@ dependencies = [
     # Redes densas y RL en CPU
     "joblib>=1.4",
     "threadpoolctl>=3.1",
-    "gymnasium==1.4.0",
     "torch==2.14.1",
     "torchrl==0.14.1",
     "tensordict==0.14.3",

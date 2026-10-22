@@ -16,9 +16,6 @@ from sklearn.pipeline import Pipeline
 from truss_research.cerchas.schemas import OUTPUT_COLUMNS
 from truss_research.datos.procedencia import PhysicalConfirmation, load_confirmations
 from truss_research.datos.procesados import load_design_split
-from truss_research.evaluacion import precision_cpu
-from truss_research.evaluacion.precision_cpu import CpuClock, cpu_batches
-from truss_research.evaluacion.recursos import MeasurementParameters
 from truss_research.evaluacion.registro import execution_log
 from truss_research.evaluacion.robustez import coverage_tables, export_error_diagnostics
 from truss_research.surrogates import convergencia, explicabilidad
@@ -146,37 +143,6 @@ def test_rejected_gpr_trials_consume_budget(
         assert all(trial.user_attrs["convergence_failure"] for trial in study.trials)
 
 
-@pytest.mark.parametrize("cpu_advances", [True, False])
-def test_cpu_quantization_is_resolved_or_explicitly_undefined(
-    monkeypatch: pytest.MonkeyPatch, cpu_advances: bool
-) -> None:
-    counters = [0.0, 0.0]
-    monkeypatch.setattr(precision_cpu, "process_time", lambda: counters[0])
-    monkeypatch.setattr(precision_cpu, "perf_counter", lambda: counters[1])
-
-    def operation() -> None:
-        counters[0] += 0.03125 if cpu_advances else 0
-        counters[1] += 0.02
-
-    settings = MeasurementParameters(
-        cpu_repeats=2, cpu_min_seconds=0.001, cpu_max_wall_seconds=0.2
-    )
-    results = cpu_batches(operation, settings, CpuClock(1e-7, 0.015625, "simulado"))
-    assert len(results) == 2
-    assert all(
-        result["status"]
-        == ("resolved" if cpu_advances else "insufficient_clock_resolution_or_budget")
-        for result in results
-    )
-    if cpu_advances:
-        assert all(
-            result["calls"] == 4 and result["cpu_per_call_seconds"] == 0.03125
-            for result in results
-        )
-    else:
-        assert all(result["cpu_per_call_seconds"] is None for result in results)
-
-
 def test_execution_log_preserves_failure_and_restores_handlers(tmp_path: Path) -> None:
     path = tmp_path / "attempt.log"
     previous = list(logging.getLogger().handlers)
@@ -294,8 +260,6 @@ def test_shap_tree_failure_uses_valid_permutation(
             design_data,
             config.output_dir,
             destination,
-            background_size=2,
-            permutation_rounds=1,
         )
     )
     metadata = json.loads((destination / "run.json").read_text(encoding="utf-8"))
@@ -312,7 +276,7 @@ def test_shap_tree_failure_uses_valid_permutation(
 def test_shap_invalid_permutation_is_rejected(
     design_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config = PredictorConfig(design_data, tmp_path / "predictor", model="ridge")
+    config = PredictorConfig(design_data, tmp_path / "predictor", model="svr")
     train_predictor(config)
 
     def invalid_values(

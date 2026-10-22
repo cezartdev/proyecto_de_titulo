@@ -9,43 +9,6 @@ import pandas as pd
 
 from truss_research.cerchas.schemas import StructuralLimits
 
-GROUP_PARTITIONS = ("train", "calibration", "validation", "test")
-MIN_FINITE_CALIBRATION = 19
-
-
-@dataclass(frozen=True)
-class GenerationSplitParameters:
-    fractions: tuple[float, ...] = (0.64, 0.16, 0.10, 0.10)
-    min_training: int = 128
-    min_calibration: int = 40
-    min_evaluation: int = 32
-
-    def __post_init__(self) -> None:
-        if (
-            len(self.fractions) != len(GROUP_PARTITIONS)
-            or any(
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not isfinite(value)
-                or value <= 0
-                for value in self.fractions
-            )
-            or not isclose(sum(self.fractions), 1.0)
-        ):
-            raise ValueError("Las cuatro proporciones por generaciones deben sumar uno")
-        if any(
-            type(value) is not int or value < 1
-            for value in (
-                self.min_training,
-                self.min_calibration,
-                self.min_evaluation,
-            )
-        ):
-            raise ValueError("Los tamaños agrupados deben ser enteros positivos")
-        if self.min_calibration < MIN_FINITE_CALIBRATION:
-            raise ValueError("La calibración al 95 % requiere al menos 19 diseños")
-
-
 DEFAULT_SOURCE: Final[Path] = Path("data/raw/240214-C1-20m.xlsx")
 
 DEFAULT_DESTINATION: Final[Path] = Path("data/processed_evolution")

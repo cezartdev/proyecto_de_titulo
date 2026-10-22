@@ -25,7 +25,8 @@ from truss_research.optimizacion.propuestas import ProposalParameters
 @pytest.fixture
 def small_case(tmp_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, StudyConfig]:
     training = pd.DataFrame(
-        [[300, 0.2, 0.02], [350, 0.3, 0.018], [330, 0.4, 0.022]], columns=OUTPUT_COLUMNS
+        [[300, 0.2, 0.02], [350, 0.3, 0.018], [330, 0.4, 0.022], [320, 0.35, 0.019]],
+        columns=OUTPUT_COLUMNS,
     )
     values = np.array(
         [[100, 0.8, 0.01], [200, 0.7, 0.015], [400, 0.2, 0.025], [80, 1.2, 0.01]]
@@ -49,9 +50,8 @@ def small_case(tmp_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, StudyConfig]
         tmp_path / "study",
         models=("dummy", "ridge"),
         seeds=(42, 43),
-        budgets=(3, 8),
-        catalog_size=8,
-        evolution=EvolutionParameters(population_size=2),
+        budgets=(5, 10),
+        evolution=EvolutionParameters(population_size=4),
         proposals=ProposalParameters(evaluation_episodes=2),
         analysis=AnalysisParameters(bootstrap_repeats=20),
         objective_mode="three",
@@ -74,10 +74,10 @@ def test_common_catalogues_initialization_and_effective_budgets(
     summary, trace = catalogue_comparison(training, predictions, config)
     assert set(summary.model) == {"dummy", "ridge", "random_control", "oracle_ranking"}
     assert summary.groupby("scenario").initial_indices.nunique().eq(1).all()
-    assert summary.loc[summary.budget.eq(8), "effective_budget"].eq(6).all()
-    assert summary.loc[summary.budget.eq(8), "catalogue_exhausted"].all()
+    assert summary.loc[summary.budget.eq(10), "effective_budget"].eq(8).all()
+    assert summary.loc[summary.budget.eq(10), "catalogue_exhausted"].all()
     assert trace.groupby(["scenario", "model", "seed"]).iter_id.nunique().eq(4).all()
-    first = summary.loc[summary.budget.eq(3)].groupby("model").auc.mean()
+    first = summary.loc[summary.budget.eq(5)].groupby("model").auc.mean()
     assert first["ridge"] > first["dummy"]
     assert summary.objective_mode.eq("three").all()
 
@@ -132,7 +132,7 @@ def test_paired_intervals_average_seed_replicas_and_cache_rejects_changes(
     with pytest.raises(ValueError, match="otros datos"):
         write_benchmark(
             (training, predictions),
-            replace(config, objective_mode="mass_displacement"),
+            replace(config, proposals=replace(config.proposals, evaluation_episodes=3)),
             tmp_path / "utility",
         )
 

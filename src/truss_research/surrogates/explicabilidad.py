@@ -2,7 +2,7 @@
 
 import logging
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -10,8 +10,9 @@ import pandas as pd
 from sklearn.pipeline import Pipeline
 
 from truss_research.cerchas.schemas import INPUT_COLUMNS, OUTPUT_COLUMNS
-from truss_research.datos.procesados import load_design_split
+from truss_research.datos.procesados import JsonValue, load_design_split
 from truss_research.evaluacion.recursos import measured
+from truss_research.surrogates.atribuciones import linear_values, tree_values
 from truss_research.surrogates.configuracion import SCHEMA_VERSION, FloatArray
 from truss_research.surrogates.experimentos import (
     data_signature,
@@ -25,6 +26,8 @@ from truss_research.surrogates.experimentos import (
 BACKGROUND_SIZE = 100
 
 PERMUTATION_ROUNDS = 10
+PERMUTATION_BATCH_SIZE = 128
+TREE_MODELS = frozenset(("random_forest", "catboost", "xgboost", "lightgbm"))
 
 ADDITIVITY_TOLERANCE = 1e-4
 
@@ -41,6 +44,8 @@ class ExplanationConfig:
     permutation_rounds: int = PERMUTATION_ROUNDS
     device: str | None = None
     evaluation_limit: int | None = None
+    batch_size: int = PERMUTATION_BATCH_SIZE
+    target_index: int | None = None
 
     def __post_init__(self) -> None:
         if self.device not in (None, "cpu", "cuda"):
@@ -49,8 +54,211 @@ class ExplanationConfig:
             type(self.evaluation_limit) is not int or self.evaluation_limit < 1
         ):
             raise ValueError("El límite del piloto debe ser positivo")
-        if min(self.background_size, self.permutation_rounds) < 1:
-            raise ValueError("Referencia y rondas deben ser positivas")
+        if any(
+            type(value) is not int or value < 1
+            for value in (
+                self.background_size,
+                self.permutation_rounds,
+                self.batch_size,
+            )
+        ):
+            raise ValueError("Referencia, rondas y lotes deben ser enteros positivos")
+        if self.target_index is not None and (
+            type(self.target_index) is not int
+            or not 0 <= self.target_index < len(OUTPUT_COLUMNS)
+        ):
+            raise ValueError("Índice de respuesta inválido")
+        if type(self.seed) is not int or not 0 <= self.seed < 2**32:
+            raise ValueError("Semilla de explicación inválida")
+
+
+@dataclass(frozen=True)
+class AttributionJob:
+    model: Pipeline
+    data: tuple[pd.DataFrame, pd.DataFrame]
+    config: ExplanationConfig
+    family: str
+    predicted: FloatArray
+
+
+@dataclass
+class AttributionResult:
+    values: FloatArray
+    bases: FloatArray
+    method: str
+    requested_method: str
+    fallback_reason: str | None = None
+    tree_error: list[float] | None = None
+    components: list[dict[str, JsonValue]] = field(default_factory=list)
+    prediction_calls: int = 1
+    prediction_rows: int = 0
+    permutation_seconds: float = 0.0
+
+
+def checked_attributions(
+    job: AttributionJob, result: AttributionResult
+) -> AttributionResult:
+    validate_contributions(result.values, result.bases, job.predicted.shape)
+    if not np.allclose(
+        result.bases + result.values.sum(axis=1),
+        job.predicted,
+        rtol=ADDITIVITY_TOLERANCE,
+        atol=ADDITIVITY_TOLERANCE,
+    ):
+        raise ValueError(
+            "Las contribuciones SHAP no reconstruyen las predicciones en unidades originales"
+        )
+    return result
+
+
+def permuted_attributions(job: AttributionJob) -> AttributionResult:
+    from truss_research.surrogates.permutaciones import checkpoint_metrics
+
+    values, bases = permutation_values(job.model, job.data, job.config)
+    checked_attributions(
+        job, AttributionResult(values, bases, "permutation", "permutation")
+    )
+    costs = checkpoint_metrics(job.config)
+    return checked_attributions(
+        job,
+        AttributionResult(
+            values,
+            bases,
+            "permutation",
+            "permutation",
+            prediction_calls=1 + int(costs["prediction_calls"]),
+            prediction_rows=len(job.data[1]) + int(costs["prediction_rows"]),
+            permutation_seconds=float(costs["elapsed"]),
+        ),
+    )
+
+
+def forest_attributions(job: AttributionJob) -> AttributionResult:
+    requested = (
+        "tree_interventional"
+        if "preprocessing" in job.model.named_steps
+        else "tree_path_dependent"
+    )
+    try:
+        values, bases = tree_values(job.model, job.data)
+        validate_contributions(values, bases, job.predicted.shape)
+    except (ValueError, RuntimeError, TypeError, NotImplementedError) as error:
+        reason = f"{type(error).__name__}: {error}"
+        logger.warning("TreeExplainer falló: %s; se usarán permutaciones", reason)
+        result = permuted_attributions(job)
+        result.method, result.requested_method = (
+            "permutation_after_tree_error",
+            requested,
+        )
+        result.fallback_reason = reason
+        return result
+    tree_error = np.max(
+        np.abs(bases + values.sum(axis=1) - job.predicted), axis=0
+    ).tolist()
+    if not np.allclose(
+        bases + values.sum(axis=1),
+        job.predicted,
+        rtol=ADDITIVITY_TOLERANCE,
+        atol=ADDITIVITY_TOLERANCE,
+    ):
+        logger.warning(
+            "TreeExplainer no reconstruye las respuestas; se usarán permutaciones"
+        )
+        result = permuted_attributions(job)
+        result.method, result.requested_method = (
+            "permutation_after_tree_additivity_failure",
+            requested,
+        )
+        result.fallback_reason, result.tree_error = (
+            "tree_additivity_failure",
+            tree_error,
+        )
+        return result
+    return AttributionResult(
+        values,
+        bases,
+        requested,
+        requested,
+        tree_error=tree_error,
+        prediction_rows=len(job.data[1]),
+    )
+
+
+def composite_attributions(job: AttributionJob) -> AttributionResult:
+    results: list[AttributionResult] = []
+    components: list[dict[str, JsonValue]] = []
+    regressor = job.model.named_steps["regressor"]
+    for index, (settings, model) in enumerate(regressor.components_):
+        config = replace(
+            job.config,
+            predictor_dir=job.config.predictor_dir / "components" / str(index),
+            output_dir=job.config.output_dir.with_name(
+                job.config.output_dir.name + f"_target_{index}"
+            ),
+            target_index=index,
+        )
+        predicted = np.asarray(model.predict(job.data[1])).reshape(len(job.data[1]), 1)
+        result = checked_attributions(
+            AttributionJob(model, job.data, config, settings.model, predicted),
+            compute_attributions(
+                AttributionJob(model, job.data, config, settings.model, predicted)
+            ),
+        )
+        results.append(result)
+        components.append(
+            {
+                "target": OUTPUT_COLUMNS[index],
+                "model": settings.model,
+                "method": result.method,
+                "requested_method": result.requested_method,
+                "fallback_reason": result.fallback_reason,
+            }
+        )
+    return AttributionResult(
+        np.concatenate([item.values for item in results], axis=-1),
+        np.concatenate([item.bases for item in results], axis=-1),
+        "targetwise_components",
+        "targetwise_components",
+        components=components,
+        prediction_calls=1 + sum(item.prediction_calls for item in results),
+        prediction_rows=len(job.data[1])
+        + sum(item.prediction_rows for item in results),
+        permutation_seconds=sum(item.permutation_seconds for item in results),
+    )
+
+
+def compute_attributions(job: AttributionJob) -> AttributionResult:
+    if job.family == "targetwise":
+        return checked_attributions(job, composite_attributions(job))
+    if job.family in TREE_MODELS:
+        return forest_attributions(job)
+    if job.family == "dummy":
+        values = np.zeros(
+            (len(job.data[1]), len(INPUT_COLUMNS), job.predicted.shape[1])
+        )
+        return checked_attributions(
+            job,
+            AttributionResult(
+                values,
+                np.broadcast_to(job.predicted[0], job.predicted.shape).copy(),
+                "constant",
+                "constant",
+                prediction_rows=len(job.data[1]),
+            ),
+        )
+    if job.family == "ridge":
+        values, bases = linear_values(job.model, job.data)
+        return checked_attributions(
+            job,
+            AttributionResult(
+                values,
+                bases,
+                "linear_independent",
+                "linear_independent",
+                prediction_rows=len(job.data[1]),
+            ),
+        )
+    return permuted_attributions(job)
 
 
 def permutation_values(
@@ -70,60 +278,6 @@ def explain_model(config: ExplanationConfig) -> pd.DataFrame:
     metadata["warnings"] = warning_records(captured)
     write_json(config.output_dir / "run.json", metadata)
     return result
-
-
-def tree_values(
-    model: Pipeline, data: tuple[pd.DataFrame, pd.DataFrame]
-) -> tuple[FloatArray, FloatArray]:
-    import shap
-
-    background, evaluation = data
-    regressor = model.named_steps["regressor"]
-    if "preprocessing" not in model.named_steps:
-        from truss_research.surrogates.modelos import categorical_features
-
-        table = categorical_features(evaluation, regressor.config.model)
-        native_values = []
-        native_bases = []
-        for estimator in regressor.estimators_:
-            explanation = shap.TreeExplainer(
-                estimator, feature_perturbation="tree_path_dependent"
-            )
-            native_values.append(
-                np.asarray(explanation.shap_values(table, check_additivity=False))
-            )
-            native_bases.append(
-                np.full(
-                    len(table), float(np.asarray(explanation.expected_value).squeeze())
-                )
-            )
-        return np.stack(native_values, axis=-1), np.stack(native_bases, axis=-1)
-
-    transformer = model.named_steps["preprocessing"]
-    encoded_background, encoded = (
-        transformer.transform(background),
-        transformer.transform(evaluation),
-    )
-    values = np.empty((len(evaluation), len(INPUT_COLUMNS), len(OUTPUT_COLUMNS)))
-    bases = np.empty((len(evaluation), len(OUTPUT_COLUMNS)))
-    numeric = [name for name in INPUT_COLUMNS if name != "web_config"]
-    for target, estimator in enumerate(model.named_steps["regressor"].estimators_):
-        explanation = shap.TreeExplainer(
-            estimator, data=encoded_background, feature_perturbation="interventional"
-        )
-        contributions = np.asarray(
-            explanation.shap_values(encoded, check_additivity=False)
-        )
-        if contributions.shape != encoded.shape:
-            raise ValueError("Dimensiones SHAP transformadas incompatibles")
-        values[:, INPUT_COLUMNS.index("web_config"), target] = contributions[
-            :, transformer.output_indices_["web_config"]
-        ].sum(axis=1)
-        numeric_values = contributions[:, transformer.output_indices_["numeric"]]
-        for column, name in enumerate(numeric):
-            values[:, INPUT_COLUMNS.index(name), target] = numeric_values[:, column]
-        bases[:, target] = float(np.asarray(explanation.expected_value).squeeze())
-    return values, bases
 
 
 def validate_contributions(
@@ -164,56 +318,17 @@ def explain_values(config: ExplanationConfig) -> pd.DataFrame:
         min(config.background_size, len(training)), random_state=config.seed
     )
     predicted = predict(model, evaluation).to_numpy()
-    values = np.empty((len(evaluation), len(INPUT_COLUMNS), len(OUTPUT_COLUMNS)))
-    bases = np.empty((len(evaluation), len(OUTPUT_COLUMNS)))
-    method = "permutation"
-    configuration = metadata.get("config")
-    is_forest = isinstance(configuration, dict) and configuration.get("model") in (
-        "random_forest",
-        "catboost",
-        "xgboost",
-        "lightgbm",
-    )
-    tree_exception = None
-    if is_forest:
-        try:
-            values, bases = tree_values(model, (background, evaluation))
-            validate_contributions(values, bases, predicted.shape)
-            method = (
-                "tree_interventional"
-                if configuration["model"] == "random_forest"
-                else "tree_path_dependent"
-            )
-        except (ValueError, RuntimeError, TypeError, NotImplementedError) as error:
-            tree_exception = f"{type(error).__name__}: {error}"
-            logger.warning(
-                "TreeExplainer falló: %s; se usarán permutaciones", tree_exception
-            )
-            values, bases = permutation_values(model, (background, evaluation), config)
-            method = "permutation_after_tree_error"
-    else:
-        values, bases = permutation_values(model, (background, evaluation), config)
-    tree_error = (
-        np.max(np.abs(bases + values.sum(axis=1) - predicted), axis=0).tolist()
-        if is_forest and tree_exception is None
-        else None
-    )
-    if (
-        is_forest
-        and tree_exception is None
-        and not np.allclose(
-            bases + values.sum(axis=1),
+    configuration = metadata["config"]
+    result = compute_attributions(
+        AttributionJob(
+            model,
+            (background, evaluation),
+            config,
+            str(configuration["model"]),
             predicted,
-            rtol=ADDITIVITY_TOLERANCE,
-            atol=ADDITIVITY_TOLERANCE,
         )
-    ):
-        logger.warning(
-            "TreeExplainer no reconstruye las respuestas (errores %s); se utilizarán permutaciones",
-            tree_error,
-        )
-        values, bases = permutation_values(model, (background, evaluation), config)
-        method = "permutation_after_tree_additivity_failure"
+    )
+    values, bases = result.values, result.bases
     validate_contributions(values, bases, predicted.shape)
     if not np.allclose(
         bases + values.sum(axis=1),
@@ -247,21 +362,15 @@ def explain_values(config: ExplanationConfig) -> pd.DataFrame:
         config.output_dir / "run.json",
         {
             "schema_version": SCHEMA_VERSION,
-            "tree_additivity_error_by_target": tree_error,
-            "method": method,
-            "requested_method": (
-                "tree_interventional"
-                if configuration["model"] == "random_forest"
-                else "tree_path_dependent"
-            )
-            if is_forest
-            else "permutation",
-            "fallback_reason": tree_exception
-            or (
-                "tree_additivity_failure"
-                if method == "permutation_after_tree_additivity_failure"
-                else None
-            ),
+            "method": result.method,
+            "requested_method": result.requested_method,
+            "fallback_reason": result.fallback_reason,
+            "tree_additivity_error_by_target": result.tree_error,
+            "component_methods": result.components,
+            "counted_prediction_calls": result.prediction_calls,
+            "counted_prediction_rows": result.prediction_rows,
+            "permutation_completed_seconds": result.permutation_seconds,
+            "prediction_count_scope": "pipeline calls; includes reconstruction checks; checkpoints count completed designs, interrupted uncommitted work excluded",
             "final_additivity_error_by_target": np.max(
                 np.abs(bases + values.sum(axis=1) - predicted), axis=0
             ).tolist(),
@@ -275,10 +384,14 @@ def explain_values(config: ExplanationConfig) -> pd.DataFrame:
             "execution_device": execution_device,
             "prediction_components": prediction_devices(model),
             "evaluation_limit": config.evaluation_limit,
+            "full_validation_designs": len(split.validation),
+            "full_training_designs": len(split.training),
+            "batch_size": config.batch_size,
             "seed": config.seed,
             "permutation_rounds": config.permutation_rounds,
             "explanation_seconds": perf_counter() - started,
             "interpretation": "Contribuciones predictivas; no evidencia causal ni certificación física",
+            "background_semantics": "Independent/linear/interventional usan la referencia muestreada; tree_path_dependent usa frecuencias internas del árbol. Targetwise declara método por respuesta.",
         },
     )
     return table

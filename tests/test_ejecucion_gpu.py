@@ -74,14 +74,8 @@ def test_campaign_profiles_and_plan(tmp_path: Path) -> None:
     [
         ("search", "tabpfn", True),
         ("fold", "targetwise", True),
-        ("explain", "tabpfn", True),
-        ("explain", "random_forest", False),
         ("predictor", "mlp", False),
         ("predictor", "catboost", False),
-        ("policy", "tabpfn", False),
-        ("block", "tabpfn", False),
-        ("decision", "targetwise", False),
-        ("bank", "dummy", True),
     ],
 )
 def test_campaign_routes_only_tabpfn_computation(

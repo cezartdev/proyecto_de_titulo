@@ -17,30 +17,23 @@ from truss_research.evaluacion.recorrido import (
     report_root,
     save_record,
 )
-from truss_research.optimizacion.compatibilidad_ejecucion import compatible_sources
 from truss_research.optimizacion.estudio_estado import (
     artifact_signatures,
     environment_versions,
     load_study_config,
     open_session,
     source_signature,
-    verify_task,
 )
 from truss_research.optimizacion.protocolo import load_protocol
 
 CLI_STAGES = {
-    "adaptive": "evaluar-seleccion-adaptativa",
-    "sensitivity": "analizar-sensibilidad",
-    "learning-curves": "evaluar-curvas",
     "benchmark": "medir-costos",
     "report": "resumir-estudio",
     "audit": "auditar-estudio",
     "notebooks": "presentar-notebooks",
 }
 EXPORT_NAMES = {
-    "adaptive": "adaptativa",
-    "sensitivity": "sensibilidad",
-    "learning-curves": "curvas",
+    "explain": "explicabilidad",
     "benchmark": "benchmark",
     "report": "informe",
     "audit": "auditoria",
@@ -57,7 +50,7 @@ CHECK_TESTS = (
 class Campaign:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        self.stages = pipeline_stages(getattr(args, "interpolation", False))
+        self.stages = pipeline_stages(getattr(args, "interpolation", False), args.mode)
         self.interpolation_destination = (
             getattr(args, "interpolation_dest", None)
             or args.estudio.with_name(args.estudio.name + "_interpolacion")
@@ -140,6 +133,8 @@ class Campaign:
         from truss_research.datos.procedencia import confirmations_digest
 
         extra = {}
+        if stage == "explain":
+            extra["explain_config"] = source_digest(Path("config/explain.json"))
         if stage == "test":
             extra = {
                 p.as_posix(): source_digest(p) for p in Path("tests").rglob("*.py")
@@ -188,35 +183,28 @@ class Campaign:
             raise ValueError(
                 f"Cambió una salida completa de {stage}; se conserva para diagnóstico"
             )
-        acceptable = (self.inputs(stage),)
-        if saved.get("inputs") not in acceptable:
-            acceptable += tuple(
-                self.inputs(stage, previous)
-                for previous in compatible_sources(source_signature())
-            )
-        if saved.get("inputs") not in acceptable:
+        if saved.get("inputs") != self.inputs(stage):
             return False
         if stage in ("study", "final"):
-            if self.config.experiment == "evolution":
-                from truss_research.evaluacion.busqueda_evolutiva import (
-                    verify_evaluation,
-                )
+            from truss_research.evaluacion.busqueda_evolutiva import verify_evaluation
 
-                phase = "validation" if stage == "study" else "test"
-                verify_evaluation(self.args.estudio / "evolution" / phase)
-                return True
-            from truss_research.optimizacion.estudio import requires_execution
-
-            session = open_session(self.config, True)
-            if requires_execution(
-                session, "validacion" if stage == "study" else "final"
-            ):
-                return False
-            for task in (*session.tasks.values(), *session.preparation_tasks.values()):
-                verify_task(task)
+            phase = "validation" if stage == "study" else "test"
+            verify_evaluation(self.args.estudio / "evolution" / phase)
         return True
 
     def command(self, stage: str) -> list[str]:
+        if stage == "explain":
+            return [
+                sys.executable,
+                "-m",
+                "truss_research.evaluacion.explicabilidad",
+                "--estudio",
+                str(self.args.estudio),
+                "--config",
+                "config/explain.json",
+                "--accelerator",
+                self.config.tabpfn.device,
+            ]
         if stage == "interpolation":
             return [
                 sys.executable,
@@ -309,7 +297,6 @@ class Campaign:
             CLI_STAGES[stage],
             "--estudio",
             str(self.args.estudio),
-            *(workers if stage == "adaptive" else ()),
         ]
 
     def outputs(self, stage: str) -> dict[str, str]:
@@ -353,36 +340,22 @@ class Campaign:
                 )
             }
         if stage in ("study", "final", "smoke"):
-            from truss_research.optimizacion.estudio_estado import read_study
-
             root = (
                 self.args.estudio.with_name(self.args.estudio.name + "_smoke")
                 if stage == "smoke"
                 else self.args.estudio
             )
-            if self.config.experiment == "evolution":
-                evolution = root / "evolution"
-                return {
-                    str(evolution / name): digest
-                    for name, digest in artifact_signatures(evolution).items()
-                    if stage not in ("study", "smoke")
-                    or (not name.startswith("test/") and name != "closed.json")
-                } | (
-                    {str(root / "freeze.json"): source_digest(root / "freeze.json")}
-                    if stage not in ("study", "smoke")
-                    else {}
-                )
-            state = read_study(root)
-            rows = (*state["tasks"], *state.get("preparation_tasks", []))
-            outputs = {
-                str(Path(row["directory"]) / name): digest
-                for row in rows
-                if stage != "study" or not row["key"].startswith("test/")
-                for name, digest in row["signatures"].items()
-            }
-            if stage != "study":
-                outputs[str(root / "freeze.json")] = source_digest(root / "freeze.json")
-            return outputs
+            evolution = root / "evolution"
+            return {
+                str(evolution / name): digest
+                for name, digest in artifact_signatures(evolution).items()
+                if stage not in ("study", "smoke")
+                or (not name.startswith("test/") and name != "closed.json")
+            } | (
+                {str(root / "freeze.json"): source_digest(root / "freeze.json")}
+                if stage not in ("study", "smoke")
+                else {}
+            )
         candidates = sorted(self.root.glob(EXPORT_NAMES[stage] + "_[0-9][0-9][0-9]"))
         if not candidates:
             raise ValueError(f"No se produjo la exportación de {stage}")
@@ -474,12 +447,6 @@ class Campaign:
 
     def run(self) -> None:
         for stage in self.stages[1:]:
-            if self.config.experiment == "evolution" and stage in (
-                "adaptive",
-                "sensitivity",
-                "learning-curves",
-            ):
-                continue
             self.execute(stage)
         self.records.update(
             status="complete",

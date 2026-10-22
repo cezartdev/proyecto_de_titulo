@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from itertools import combinations
 from pathlib import Path
 
@@ -46,7 +46,7 @@ def benchmark_protocol(config: StudyConfig) -> dict[str, JsonValue]:
         "family_selection": "validation_mean_auc_smallest_budget_then_mae_then_name",
         "selection_budget": min(config.budgets),
         "quality_source": "historical_observed_not_model_predictions",
-        "catalogue_size_requested": max(config.catalog_size, max(config.budgets)),
+        "catalogue_size_requested": max(config.budgets),
         "initial_population": config.evolution.population_size,
         "budgets": list(config.budgets),
         "seeds": list(config.seeds),
@@ -76,11 +76,7 @@ def observed_curve(
 
 def objective_space(training: pd.DataFrame, config: StudyConfig) -> ObjectiveSpace:
     space = ObjectiveSpace.fit(training[list(OUTPUT_COLUMNS)].to_numpy(), config.limits)
-    return (
-        replace(space, active_dimensions=(0, 2))
-        if config.objective_mode == "mass_displacement"
-        else space
-    )
+    return space
 
 
 def catalogue_comparison(
@@ -121,7 +117,7 @@ def catalogue_comparison(
         initial = training_values[initial_indices]
         indices = rng.choice(
             len(table),
-            size=min(len(table), max(config.catalog_size, max(config.budgets))),
+            size=min(len(table), max(config.budgets)),
             replace=False,
         )
         values = actual[indices]

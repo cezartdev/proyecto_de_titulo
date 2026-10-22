@@ -86,7 +86,11 @@ def reset_study(study: Path, protocol: Path, dry_run: bool = False) -> tuple[Pat
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--estudio", type=Path, default=Path("artifacts/estudio"))
+    parser.add_argument(
+        "--estudio",
+        type=Path,
+        default=Path("artifacts/comparacion_tres_objetivos_final_001"),
+    )
     parser.add_argument("--config", type=Path, default=Path("config/study.json"))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()

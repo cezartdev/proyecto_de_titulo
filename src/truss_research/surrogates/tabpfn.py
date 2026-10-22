@@ -25,7 +25,7 @@ CHECKPOINT_FILENAME = "tabpfn-v2.5-regressor-v2.5_default.ckpt"
 CHECKPOINT_SHA256 = "6e0308b7e5f3a8325b798b96d986b2b282c3608b1cda6e2991425a2a261d40b8"
 CHECKPOINT_DIRECTORY = Path("artifacts/pretrained/tabpfn")
 PILOT_SECONDS = 600
-PILOT_SIZES = (128, 814)
+PILOT_SIZES = (128,)
 SLOT_POLL_SECONDS = 0.05
 type FloatArray = npt.NDArray[np.float64]
 

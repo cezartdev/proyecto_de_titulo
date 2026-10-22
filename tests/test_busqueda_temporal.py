@@ -43,46 +43,6 @@ class CountingWorld:
 
 
 @pytest.fixture
-def temporal_table() -> pd.DataFrame:
-    rows = []
-    for generation in range(20):
-        for solution in range(5):
-            height = 0.5 + generation * 0.04 + solution * 0.003
-            if generation >= 5 and solution == 0:
-                height = 0.5
-            rows.append(
-                dict(
-                    zip(
-                        [
-                            "iter_id",
-                            "generation",
-                            "solution",
-                            *INPUT_COLUMNS,
-                            *OUTPUT_COLUMNS,
-                        ],
-                        [
-                            f"{{{generation};{solution}}}",
-                            generation,
-                            solution,
-                            0,
-                            10,
-                            height,
-                            1.0,
-                            2.0,
-                            2,
-                            3,
-                            2000 - 100 * height,
-                            0.5,
-                            0.01,
-                        ],
-                        strict=True,
-                    )
-                )
-            )
-    return pd.DataFrame(rows)
-
-
-@pytest.fixture
 def context() -> SearchContext:
     features = np.array(
         [[0, 10, 0.5 + index * 0.03, 1, 2, 2, 3] for index in range(20)], dtype=float
@@ -239,39 +199,6 @@ def test_unsupported_historical_query_consumes_budget_and_continues(
     assert search.last_evaluation is None
     assert search.reason != "unsupported_topology"
     assert search.prepare()
-
-
-@pytest.fixture
-def prepared_temporal(
-    temporal_table: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Path:
-    extra = temporal_table.copy()
-    extra.solution += 5
-    extra["iter_id"] = [
-        f"{{{g};{s}}}" for g, s in zip(extra.generation, extra.solution, strict=True)
-    ]
-    extra.lr_height_m += 0.001
-    extra.mass_kg = 2000 - 100 * extra.lr_height_m
-    table = pd.concat([temporal_table, extra], ignore_index=True)
-    source = tmp_path / "fixture.xlsx"
-    source.write_bytes(b"synthetic-fixture")
-    monkeypatch.setattr(
-        "truss_research.datos.preparacion.load_raw_table", lambda *args: table
-    )
-    monkeypatch.setattr(
-        "truss_research.datos.preparacion.normalize_columns", lambda value: value
-    )
-    destination = tmp_path / "temporal"
-    prepare_dataset(
-        PreparationConfig(
-            source,
-            destination,
-            dataset=DatasetSpec(20, 10),
-            split=SplitConfig(protocol="first_appearance"),
-            calibration_fraction=0.2,
-        )
-    )
-    return destination
 
 
 def test_small_ridge_temporal_oof_and_parallel_preparation(
@@ -631,7 +558,9 @@ def test_development_freeze_and_exports_with_synthetic_worlds(
     monkeypatch.setattr(
         campaign,
         "load_design_split",
-        lambda path: type("Split", (), {"validation": table, "testing": table})(),
+        lambda path: type(
+            "Split", (), {"training": table, "validation": table, "testing": table}
+        )(),
     )
     original_episode = campaign.cached_episode
     calls = []
@@ -661,10 +590,15 @@ def test_development_freeze_and_exports_with_synthetic_worlds(
     assert set(summaries.experiment) == {"A", "B"}
     assert summaries.reference_hypervolume.nunique() == 1
     assert set(summaries.target_reference_scope) == {"training_only_frozen_before_test"}
-    export_search(config.output_dir, tmp_path / "report", "notebooks")
+    monkeypatch.setattr(
+        "truss_research.datos.procesados.load_design_split",
+        lambda path: type("Split", (), {"training": table})(),
+    )
+    export_search(config.output_dir, tmp_path / "report", "informe")
     assert len(pd.read_csv(tmp_path / "report/policy_costs.csv")) == 4
     assert (tmp_path / "report/target_attainment.csv").is_file()
-    assert len(list((tmp_path / "report").glob("*.html"))) == 4
+    assert (tmp_path / "report/search_curves.csv").is_file()
+    assert (tmp_path / "report/search_fronts.csv").is_file()
     assert frozen == (config.output_dir / "freeze.json").read_bytes()
     campaign.run_evolution_study(config, "final", True)
 

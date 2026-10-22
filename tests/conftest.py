@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from truss_research.cerchas.schemas import INPUT_COLUMNS, OUTPUT_COLUMNS
 from truss_research.datos import PreparationConfig, prepare_dataset
 from truss_research.datos.schemas import (
     COLUMN_MAPPING,
@@ -56,6 +57,79 @@ def design_data(raw_table: pd.DataFrame, tmp_path: Path) -> Path:
             destination,
             dataset=DatasetSpec(10, 10),
             split=SplitConfig(protocol="design"),
+        )
+    )
+    return destination
+
+
+@pytest.fixture
+def temporal_table() -> pd.DataFrame:
+    rows = []
+    for generation in range(20):
+        for solution in range(5):
+            height = 0.5 + generation * 0.04 + solution * 0.003
+            if generation >= 5 and solution == 0:
+                height = 0.5
+            rows.append(
+                dict(
+                    zip(
+                        [
+                            "iter_id",
+                            "generation",
+                            "solution",
+                            *INPUT_COLUMNS,
+                            *OUTPUT_COLUMNS,
+                        ],
+                        [
+                            f"{{{generation};{solution}}}",
+                            generation,
+                            solution,
+                            0,
+                            10,
+                            height,
+                            1.0,
+                            2.0,
+                            2,
+                            3,
+                            2000 - 100 * height,
+                            0.5,
+                            0.01,
+                        ],
+                        strict=True,
+                    )
+                )
+            )
+    return pd.DataFrame(rows)
+
+
+@pytest.fixture
+def prepared_temporal(
+    temporal_table: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    extra = temporal_table.copy()
+    extra.solution += 5
+    extra["iter_id"] = [
+        f"{{{g};{s}}}" for g, s in zip(extra.generation, extra.solution, strict=True)
+    ]
+    extra.lr_height_m += 0.001
+    extra.mass_kg = 2000 - 100 * extra.lr_height_m
+    table = pd.concat([temporal_table, extra], ignore_index=True)
+    source = tmp_path / "fixture.xlsx"
+    source.write_bytes(b"synthetic-fixture")
+    monkeypatch.setattr(
+        "truss_research.datos.preparacion.load_raw_table", lambda *args: table
+    )
+    monkeypatch.setattr(
+        "truss_research.datos.preparacion.normalize_columns", lambda value: value
+    )
+    destination = tmp_path / "temporal"
+    prepare_dataset(
+        PreparationConfig(
+            source,
+            destination,
+            dataset=DatasetSpec(20, 10),
+            split=SplitConfig(protocol="first_appearance"),
+            calibration_fraction=0.2,
         )
     )
     return destination

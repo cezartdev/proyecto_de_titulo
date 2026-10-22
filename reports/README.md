@@ -1,15 +1,28 @@
 # Resultados del protocolo vigente
 
-El contrato científico está en [SCOPE.md](../docs/SCOPE.md) y los comandos en [ejecucion.md](../docs/ejecucion.md). Las exportaciones se escriben en `reports/<nombre_del_estudio>/`; los modelos y el estado científico permanecen en `artifacts/<nombre_del_estudio>/`. Por ejemplo, `reports/comparacion_tres_objetivos_001/` corresponde a `artifacts/comparacion_tres_objetivos_001/`.
+Los modelos y decisiones quedan en `artifacts/<estudio>/`; las exportaciones, en `reports/<estudio>/`. El flujo manual y sus criterios de revisión están en el [README raíz](../README.md#desarrollo-revisión-y-cierre).
 
-`make report`, `make audit`, `make benchmark` y `make notebooks` crean exportaciones numeradas `informe_*`, `auditoria_*`, `benchmark_*` y `presentacion_*`. Leen el cierre completo, no entrenan ni modifican modelos congelados. `benchmark` exporta costos almacenados; la presentación contiene cuatro notebooks y cuatro HTML de resultados.
+## Evidencia científica
 
-El resultado principal compara cada regresor por HV/AUC observado sobre catálogos históricos comunes y tres objetivos. Revisar `predictor_utility_summary.csv`, `predictor_utility_runs.csv`, `predictor_utility_paired_intervals.csv` y `prediction_utility.csv`; los errores físicos, estabilidad, cobertura y costos son complementarios. `comparison.csv` y sus archivos asociados describen la búsqueda generativa A/B, separada del benchmark por regresor.
+`freeze.json` fija decisiones antes de prueba y `evolution/closed.json` acredita el cierre terminado. La selección por AUC de validación no se recalcula al presentar. A usa respuestas históricas proyectadas y B respuestas predictivas; estas últimas no acreditan FEM ni seguridad.
 
-Los episodios y protocolos originales están en `artifacts/<estudio>/evolution/predictor_utility/{validation,test}/`. `freeze.json` fija modelos, políticas y validación antes de prueba; `evolution/closed.json` acredita la terminación. No se vuelve a escoger familia por prueba.
+- `predictor_utility_summary.csv`, `predictor_utility_runs.csv`, `predictor_utility_paired_intervals.csv` y `prediction_utility.csv`: utilidad observada de los regresores, presupuesto efectivo y relación con precisión.
+- `predictive_model_summary.csv`, `predictive_metric_summary.csv`, `predictive_seed_metrics.csv`, `predictive_paired_errors.csv`, `prediction_errors.csv`: errores físicos, semillas y contrastes exploratorios.
+- `category_coverage.csv`, `predictive_category_metrics.csv`, `predictive_interval_coverage.csv`, `physical_provenance.csv`: cobertura, intervalos si existen y límites físicos.
+- `comparison.csv`, `search_curves.csv`, `search_fronts.csv`, `termination_counts.csv`, `target_attainment.csv`: búsqueda A/B, curvas completas desde la inicialización y archivos representativos del escenario 0 y semilla representativa al mayor presupuesto.
 
-El supervisor `run-all` conserva `run_all.json` y `logs/` en esta carpeta. Con `INTERPOLATION=1`, añade una sensibilidad al final; sus datos, modelos y reporte quedan en `<ESTUDIO>_interpolacion/`, salvo `INTERPOLATION_DEST` explícito. No se mezclan sus resultados con la evaluación temporal.
+## Costos y recursos
 
-Adaptación, sensibilidad de catálogos y curvas del flujo anterior no forman parte del recorrido evolutivo vigente. Las rutas `archive/estandarizacion_001/` son antecedentes históricos, no garantía de que existan en este checkout. Los artefactos privados no se redistribuyen en Git.
+`predictor_costs.csv` separa búsqueda, OOF, ajuste, reutilización y dispositivo efectivo. `predictor_devices.csv` identifica el dispositivo por respuesta, incluidos los componentes Targetwise. `predictive_inference_costs.csv` describe inferencia. `policy_costs.csv` y `amortization.csv` describen las políticas y su aplicación sin atribuir ahorro FEM.
 
-Una exportación describe la ejecución que la produjo; no se edita para presentarla como resultado de otro protocolo. Tras cambios científicos, usar un estudio nuevo y regenerar resultados manualmente.
+`resource_phases.csv` y `resource_tasks.csv` incluyen todos los intentos predictivos registrados, aun fallidos. `research_cost.csv` resume ese alcance predictivo; la suma de duraciones de trabajos no es tiempo transcurrido ni costo total de toda la investigación. `campaign_execution.csv`, `campaign_telemetry.csv` cuando existe y `worker_jobs.csv` conservan el detalle del coordinador predictivo. No sumar totales con sus fases anidadas. RSS es muestreada y su máximo por trabajador no es la suma simultánea de memoria.
+
+`convergence_diagnostics.csv` conserva diagnósticos numéricos. `technical_closure.json` distingue cierre científico y `resources_complete`: recursos parciales deben declararse y no convertirse en mediciones completas.
+
+## Presentación y SHAP
+
+`report`, `benchmark` y `audit` comprueban el mismo cierre y crean exportaciones numeradas. `audit` guarda verificaciones de integridad y recursos sin duplicar las tablas de comparación. No son campañas nuevas ni auditorías externas independientes. `notebooks` añade los cuatro notebooks ejecutados, cuatro HTML, PNG/SVG y el índice `figures.csv`, a partir de las [fuentes canónicas](../notebooks/README.md).
+
+SHAP tiene etapas independientes `explicabilidad_001/` y `explicabilidad_piloto_001/`. El recorrido automático completo ejecuta SHAP antes de exportar; por etapas se usa `make explain`. Se adjunta la última etapa completa compatible, con `shap_global.csv`, `shap_values.csv`, `shap_examples.csv`, `shap_costs.csv`, `shap_stability.csv` y `shap_provenance.json`. El piloto nunca se adjunta como resultado principal. Una tabla de estabilidad vacía no demuestra estabilidad entre ajustes.
+
+Los manifiestos `provenance.json` firman cierre, procedencia y salidas. Cada exportación usa un destino nuevo; las parciales se conservan para diagnóstico. No se modifica una exportación para atribuirla a otra campaña. Los materiales privados están excluidos de Git.

@@ -15,20 +15,16 @@ from truss_research.datos.artefactos import read_artifact
 from truss_research.datos.procesados import JsonValue
 from truss_research.datos.schemas import DESIGN_DESTINATION
 from truss_research.evaluacion.costos import machine_context
-from truss_research.optimizacion.contratos import StudyTask
-from truss_research.optimizacion.entrenamiento import train_policy
 from truss_research.optimizacion.estudio_estado import (
     StudyConfig,
     environment_versions,
     source_signature,
 )
-from truss_research.optimizacion.politica import configured_policy
 from truss_research.optimizacion.protocolo import load_protocol
 from truss_research.optimizacion.trabajos_predictivos import (
     JobResources,
     run_measured_job,
 )
-from truss_research.optimizacion.variantes_rl import VARIANT_REGISTRY, PolicyVariant
 from truss_research.surrogates.configuracion import (
     MODEL_NAMES,
     ModelName,
@@ -52,7 +48,6 @@ EVOLUTION_POLICIES = (
 )
 type TrainingModel = (
     ModelName
-    | PolicyVariant
     | Literal[
         "evolution_rl",
         "evolution_rl_assisted",
@@ -60,7 +55,7 @@ type TrainingModel = (
         "evolution_contextual_bandit_assisted",
     ]
 )
-TRAINING_MODELS = (*MODEL_NAMES, *VARIANT_REGISTRY, *EVOLUTION_POLICIES)
+TRAINING_MODELS = (*MODEL_NAMES, *EVOLUTION_POLICIES)
 
 
 @dataclass(frozen=True)
@@ -94,16 +89,12 @@ class TrainingRequest:
         if self.mode not in ("protocol", "fit"):
             raise ValueError("El modo debe ser protocol o fit")
         if self.mode == "fit" and (
-            self.model == "targetwise"
-            or self.model in (*VARIANT_REGISTRY, *EVOLUTION_POLICIES)
+            self.model == "targetwise" or self.model in EVOLUTION_POLICIES
         ):
             raise ValueError(
                 "El modo fit admite predictores fijos; targetwise y RL requieren protocol"
             )
-        if (
-            self.model in (*VARIANT_REGISTRY, *EVOLUTION_POLICIES)
-            and self.predictor_dir is None
-        ):
+        if self.model in EVOLUTION_POLICIES and self.predictor_dir is None:
             raise ValueError("RL requiere --predictor con un predictor ya entrenado")
         if self.model in MODEL_NAMES and self.predictor_dir is not None:
             raise ValueError("--predictor solo se utiliza al entrenar políticas RL")
@@ -149,7 +140,7 @@ def training_config(request: TrainingRequest) -> StudyConfig:
 def training_plan(
     request: TrainingRequest, config: StudyConfig
 ) -> dict[str, JsonValue]:
-    policy = request.model in (*VARIANT_REGISTRY, *EVOLUTION_POLICIES)
+    policy = request.model in EVOLUTION_POLICIES
     uses_tabpfn = request.model == "tabpfn" or (
         request.model == "targetwise" and config.tabpfn_enabled
     )
@@ -233,20 +224,6 @@ def execute_training(request: TrainingRequest, config: StudyConfig) -> None:
             policy_configuration(config, (signature, request.seed, strategy_name)),
             destination,
         )
-        return
-    if request.model in VARIANT_REGISTRY:
-        assert request.predictor_dir is not None
-        policy = configured_policy(
-            config,
-            (request.predictor_dir.resolve(), destination, None),
-            StudyTask(
-                f"policy/{request.model}/{request.seed}",
-                "policy",
-                seed=request.seed,
-                variant=cast(PolicyVariant, request.model),
-            ),
-        )
-        train_policy(policy)
         return
     predictor = PredictorConfig(
         config.data_dir,

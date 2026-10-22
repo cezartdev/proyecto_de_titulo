@@ -122,7 +122,7 @@ def test_plan_creates_no_files(
     )
     assert supervise(args) == 0
     result = json.loads(capsys.readouterr().out)
-    assert result["stages"] == list(STAGES)
+    assert result["stages"] == [stage for stage in STAGES if stage != "explain"]
     assert result["max_seconds"] == 600
     assert not list(tmp_path.iterdir())
 

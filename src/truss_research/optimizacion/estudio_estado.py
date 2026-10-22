@@ -7,7 +7,6 @@ import platform
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from math import isfinite
 from pathlib import Path
@@ -20,7 +19,10 @@ from truss_research.datos.procesados import JsonValue
 from truss_research.datos.schemas import DESIGN_DESTINATION
 from truss_research.evaluacion.recursos import MeasurementParameters
 from truss_research.evaluacion.telemetria_cpu import CampaignMonitor
-from truss_research.optimizacion.compatibilidad_ejecucion import approved_patches
+from truss_research.optimizacion.configuracion_rl import (
+    RLParameters,
+    read_rl_parameters,
+)
 from truss_research.optimizacion.contratos import (
     AnalysisParameters,
     EvolutionParameters,
@@ -32,8 +34,6 @@ from truss_research.optimizacion.estrategias_busqueda import (
     read_search_parameters,
 )
 from truss_research.optimizacion.propuestas import ProposalParameters
-from truss_research.optimizacion.seleccion_incierta import AdaptiveSettings
-from truss_research.optimizacion.variantes_rl import RLParameters, read_rl_parameters
 from truss_research.surrogates.configuracion import (
     EXPERIMENT_SEEDS,
     MODEL_NAMES,
@@ -58,7 +58,7 @@ STUDY_PHASES: Final[tuple[StudyPhase, ...]] = (
 
 STATE_FILE: Final[str] = "study.json"
 
-STUDY_SCHEMA_VERSION: Final[int] = 19
+STUDY_SCHEMA_VERSION: Final[int] = 20
 
 DEPENDENCIES: Final[tuple[str, ...]] = (
     "numpy",
@@ -68,7 +68,6 @@ DEPENDENCIES: Final[tuple[str, ...]] = (
     "torch",
     "torchrl",
     "tensordict",
-    "gymnasium",
     "optuna",
     "shap",
     "pymoo",
@@ -92,16 +91,12 @@ class StudyConfig:
     outer_folds: int = 5
     final_tuning_folds: int = 3
     trials: int = 30
-    catalog_size: int = 32
-    budgets: tuple[int, ...] = (8, 16, 24)
-    episodes_per_seed: int = 10
+    budgets: tuple[int, ...] = (32, 64, 96)
     rl_steps: int = 50_000
     rl_batch: int = 64
     rl_warmup: int = 1_000
     rl_hidden: int = 64
     validation_interval: int = 5_000
-    background_size: int = 100
-    permutation_rounds: int = 10
     parameters: ModelParameters = field(default_factory=ModelParameters)
     label: str = "posterior"
     inner_folds: int | None = None
@@ -110,15 +105,14 @@ class StudyConfig:
     measurement: MeasurementParameters = field(default_factory=MeasurementParameters)
     execution: ExecutionParameters = field(default_factory=ExecutionParameters)
     rl: RLParameters = field(default_factory=RLParameters)
-    adaptive: AdaptiveSettings = field(default_factory=AdaptiveSettings)
     calibration_required: bool = False
     calibration_fraction: float = 0.2
     tabpfn: TabPFNParameters = field(default_factory=TabPFNParameters)
     pruning: PruningParameters = field(default_factory=PruningParameters)
     limits: StructuralLimits = field(default_factory=StructuralLimits)
     proposals: ProposalParameters = field(default_factory=ProposalParameters)
-    experiment: str = "catalog"
-    split_protocol: str = "design"
+    experiment: str = "evolution"
+    split_protocol: str = "first_appearance"
     objective_mode: str = "three"
     search: SearchParameters = field(default_factory=SearchParameters)
 
@@ -141,15 +135,12 @@ class StudyConfig:
             and self.evolution.population_size < MIN_DIFFERENTIAL_POPULATION
         ):
             raise ValueError("DE requiere una población compartida de al menos cuatro")
-        if self.objective_mode not in ("three", "mass_displacement"):
-            raise ValueError("Formulación de objetivos desconocida")
-        if self.experiment not in (
-            "catalog",
-            "evolution",
-        ) or self.split_protocol not in ("design", "first_appearance"):
-            raise ValueError("Experimento o partición desconocidos")
-        if self.experiment == "evolution" and self.split_protocol != "first_appearance":
-            raise ValueError("La búsqueda evolutiva exige primera aparición temporal")
+        if self.objective_mode != "three":
+            raise ValueError("El protocolo vigente requiere los tres objetivos")
+        if self.experiment != "evolution" or self.split_protocol != "first_appearance":
+            raise ValueError(
+                "El estudio requiere evolución y primera aparición temporal"
+            )
         if type(self.calibration_required) is not bool:
             raise ValueError("La exigencia de calibración debe ser booleana")
         if (
@@ -196,20 +187,14 @@ class StudyConfig:
         positive = (
             self.folds,
             self.final_tuning_folds,
-            self.catalog_size,
-            self.episodes_per_seed,
             self.rl_steps,
             self.rl_batch,
             self.rl_hidden,
             self.validation_interval,
-            self.background_size,
-            self.permutation_rounds,
         )
         if any(type(value) is not int or value < 1 for value in positive):
             raise ValueError("Los tamaños y períodos deben ser enteros positivos")
-        if self.rl_batch > self.rl.dqn.replay_size and any(
-            name != "ppo" for name in self.rl.algorithms
-        ):
+        if self.rl_batch > self.rl.dqn.replay_size:
             raise ValueError("El replay DQN debe admitir el tamaño de lote compartido")
         if self.folds < 2 or self.trials < 0 or self.rl_warmup < 0 or self.cv_seed < 0:
             raise ValueError("Pliegues, ensayos, warmup o semilla CV inválidos")
@@ -218,20 +203,12 @@ class StudyConfig:
             or len(set(self.budgets)) != len(self.budgets)
             or any(
                 type(budget) is not int
-                or not 2
-                <= budget
-                <= (
-                    self.catalog_size
-                    if self.experiment == "catalog"
-                    else self.proposals.max_evaluations
-                )
+                or not 2 <= budget <= self.proposals.max_evaluations
                 for budget in self.budgets
             )
         ):
-            raise ValueError("Presupuestos incompatibles con el catálogo")
-        if (self.evolution.enabled or self.experiment == "evolution") and min(
-            self.budgets
-        ) <= self.evolution.population_size:
+            raise ValueError("Presupuestos incompatibles con las evaluaciones máximas")
+        if min(self.budgets) <= self.evolution.population_size:
             raise ValueError(
                 "Cada presupuesto evolutivo debe superar la población inicial"
             )
@@ -266,8 +243,6 @@ class StudySession:
     executor: CpuPool | None = field(default=None, repr=False)
     gpu_executor: CpuPool | None = field(default=None, repr=False)
     telemetry: CampaignMonitor | None = field(default=None, repr=False)
-    winner_dir: Path | None = field(default=None, repr=False)
-    source_history: list[dict[str, JsonValue]] = field(default_factory=list)
 
     def save(self) -> None:
         atomic_json(
@@ -284,7 +259,6 @@ class StudySession:
                     asdict(task) for task in self.preparation_tasks.values()
                 ],
                 "execution_runs": self.execution_runs,
-                "source_history": self.source_history,
             },
         )
 
@@ -359,14 +333,11 @@ def load_study_config(directory: Path) -> StudyConfig:
     values["pruning"] = PruningParameters(**values.get("pruning", {}))
     values["limits"] = StructuralLimits(**values["limits"])
     measurement = dict(cast(dict[str, JsonValue], values["measurement"]))
-    for name in ("batch_sizes", "reuse_counts"):
-        measurement[name] = tuple(cast(list[int], measurement[name]))
     values["measurement"] = MeasurementParameters(**measurement)
     values["execution"] = ExecutionParameters(
         **cast(dict[str, int | float], values["execution"])
     )
     values["rl"] = read_rl_parameters(values.get("rl", {}))
-    values["adaptive"] = AdaptiveSettings(**values.get("adaptive", {}))
     values["proposals"] = read_proposals(values.get("proposals", {}))
     values["search"] = read_search_parameters(values.get("search", {}))
     return StudyConfig(**values)
@@ -402,30 +373,8 @@ def open_session(config: StudyConfig, resume: bool) -> StudySession:
         for name in ("dataset_signature", "versions")
     ):
         raise ValueError("Cambió la configuración, datos, código o entorno del estudio")
-    session.source_history = list(saved.get("source_history", []))
     if saved.get("source_signature") != session.source_signature:
-        if (
-            saved.get("test_started") is True
-            or (config.output_dir / "freeze.json").exists()
-        ):
-            raise ValueError(
-                "Un estudio congelado no admite la transición de código operativo"
-            )
-        patch = next(
-            (
-                patch
-                for patch in approved_patches(session.source_signature)
-                if patch.from_signature == saved.get("source_signature")
-            ),
-            None,
-        )
-        if patch is None:
-            raise ValueError(
-                "Cambió la configuración, datos, código o entorno del estudio"
-            )
-        session.source_history.append(
-            {**asdict(patch), "applied_at_utc": datetime.now(UTC).isoformat()}
-        )
+        raise ValueError("Cambió el código del estudio; elegir un destino nuevo")
     session.test_started = saved.get("test_started") is True
     records = cast(list[dict[str, JsonValue]], saved.get("tasks", []))
     session.tasks = {str(record["key"]): TaskRecord(**record) for record in records}
@@ -436,10 +385,6 @@ def open_session(config: StudyConfig, resume: bool) -> StudySession:
     session.execution_runs = cast(
         list[dict[str, JsonValue]], saved.get("execution_runs", [])
     )
-    if saved.get("source_signature") != session.source_signature:
-        for task in (*session.tasks.values(), *session.preparation_tasks.values()):
-            if task.status == "complete":
-                verify_task(task)
     return session
 
 

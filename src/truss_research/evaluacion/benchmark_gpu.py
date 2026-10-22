@@ -22,7 +22,7 @@ from threadpoolctl import threadpool_limits
 from truss_research.datos.artefactos import read_artifact
 from truss_research.datos.preparacion import source_digest
 from truss_research.datos.procesados import JsonValue
-from truss_research.evaluacion.informe_estudio import markdown_table
+from truss_research.evaluacion.informe_costos import markdown_table
 from truss_research.evaluacion.pruebas_neuronales import (
     NeuralBenchParameters,
     NeuralCase,

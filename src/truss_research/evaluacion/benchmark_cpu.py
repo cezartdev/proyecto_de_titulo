@@ -25,7 +25,7 @@ from truss_research.evaluacion.carga_cpu import (
     warm_cpu_worker,
     work_batch,
 )
-from truss_research.evaluacion.informe_estudio import markdown_table
+from truss_research.evaluacion.informe_costos import markdown_table
 from truss_research.evaluacion.telemetria_cpu import CampaignMonitor
 from truss_research.optimizacion.ejecucion_cpu import (
     WORKER_SHUTDOWN_SECONDS,

@@ -86,17 +86,3 @@ class HistoricalEvaluator:
             selected,
             "historical_observed",
         )
-
-
-@dataclass(frozen=True)
-class SyntheticEvaluator:
-    """Control matemático con objetivos en conflicto; no representa un solver de cerchas."""
-
-    def evaluate(self, features: FloatArray) -> Evaluation:
-        height = features[:, 2]
-        values = np.column_stack(
-            (1000 + 500 * height, 0.2 + 0.2 * height, 0.025 / (1 + height))
-        )
-        return Evaluation(
-            features.copy(), values, np.zeros(len(features)), "synthetic_exact"
-        )

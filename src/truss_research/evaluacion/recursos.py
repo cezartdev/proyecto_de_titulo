@@ -29,61 +29,22 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
+MEMORY_INTERVAL_MS = 50
+
+
 @dataclass(frozen=True)
 class MeasurementParameters:
-    memory_interval_ms: int = 50
-    warmup: int = 3
-    inference_repeats: int = 30
-    selection_repeats: int = 5
-    seed: int = 42
-    batch_sizes: tuple[int, ...] = (1, 32, 64)
-    reuse_counts: tuple[int, ...] = (1, 10, 100, 1000)
-    cpu_repeats: int = 3
-    cpu_min_seconds: float = 0.1
-    cpu_min_ticks: int = 8
-    cpu_max_wall_seconds: float = 2.0
-    cpu_probe_seconds: float = 0.25
+    memory_interval_ms: int = MEMORY_INTERVAL_MS
 
     def __post_init__(self) -> None:
-        positive = (
-            self.memory_interval_ms,
-            self.inference_repeats,
-            self.selection_repeats,
-            self.cpu_repeats,
-            self.cpu_min_ticks,
-        )
-        if any(type(value) is not int or value < 1 for value in positive):
-            raise ValueError("Intervalo y repeticiones deben ser enteros positivos")
-        if any(
-            isinstance(value, bool) or not isfinite(value) or value <= 0
-            for value in (
-                self.cpu_min_seconds,
-                self.cpu_max_wall_seconds,
-                self.cpu_probe_seconds,
-            )
-        ):
-            raise ValueError(
-                "Los presupuestos de medición CPU deben ser finitos y positivos"
-            )
-        if any(
-            type(value) is not int or value < 0 for value in (self.warmup, self.seed)
-        ):
-            raise ValueError("Calentamiento y semilla deben ser enteros no negativos")
-        for values in (self.batch_sizes, self.reuse_counts):
-            if not values or any(
-                type(value) is not int or value < 1 for value in values
-            ):
-                raise ValueError("Lotes y reutilizaciones deben ser enteros positivos")
-            if tuple(sorted(set(values))) != values:
-                raise ValueError(
-                    "Lotes y reutilizaciones deben ser únicos y crecientes"
-                )
+        if type(self.memory_interval_ms) is not int or self.memory_interval_ms < 1:
+            raise ValueError("El intervalo de memoria debe ser un entero positivo")
 
 
 class ResourceMonitor:
     """RSS muestreada; CPU incluye todos los hilos del proceso, también el monitor."""
 
-    def __init__(self, interval_ms: int = 50) -> None:
+    def __init__(self, interval_ms: int = MEMORY_INTERVAL_MS) -> None:
         if type(interval_ms) is not int or interval_ms < 1:
             raise ValueError("El intervalo de memoria debe ser positivo")
         self.interval_ms = interval_ms

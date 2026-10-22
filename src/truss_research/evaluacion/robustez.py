@@ -164,35 +164,6 @@ def export_evidence_context(split: TableSplit, destination: Path) -> None:
     )
 
 
-def export_tradeoffs(destination: Path) -> None:
-    strategy = pd.read_csv(destination / "strategy_cost_summary.csv")
-    costs = pd.read_csv(destination / "amortization.csv")
-    preparation = costs.groupby(
-        ["split", "catalog_size", "strategy", "budget", "scenario", "reuse_count"],
-        as_index=False,
-    )[["preparation_seconds", "loading_seconds", "total_seconds"]].mean()
-    result = preparation.merge(
-        strategy[
-            [
-                "split",
-                "catalog_size",
-                "strategy",
-                "budget",
-                "normalized_auc_mean",
-                "relative_hypervolume_mean",
-                "independent_seconds_mean",
-                "cached_seconds_mean",
-            ]
-        ],
-        on=["split", "catalog_size", "strategy", "budget"],
-        validate="many_to_one",
-    )
-    result["interpretation"] = (
-        "time_tradeoffs_do_not_imply_equal_quality_or_solver_acceleration"
-    )
-    result.to_csv(destination / "decision_tradeoffs.csv", index=False)
-
-
 def optimizer_events(
     value: JsonValue, location: str = "run"
 ) -> Iterator[tuple[str, dict[str, JsonValue]]]:

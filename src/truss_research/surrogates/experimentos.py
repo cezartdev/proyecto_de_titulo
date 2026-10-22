@@ -469,6 +469,18 @@ def prediction_report(table: pd.DataFrame, predicted: pd.DataFrame) -> pd.DataFr
     )
 
 
+def predictor_devices(model: Pipeline, config: PredictorConfig) -> dict[str, str]:
+    """Identifica cada respuesta por su componente efectivo, no por el coordinador."""
+    components = getattr(model.named_steps["regressor"], "components_", None)
+    if components is None:
+        device = config.tabpfn.device if config.model == "tabpfn" else config.device
+        return dict.fromkeys(OUTPUT_COLUMNS, device)
+    return {
+        target: part.tabpfn.device if part.model == "tabpfn" else part.device
+        for target, (part, _) in zip(OUTPUT_COLUMNS, components, strict=True)
+    }
+
+
 def train_predictor(config: PredictorConfig) -> PredictorResult:
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
@@ -781,7 +793,8 @@ def fit_predictor(config: PredictorConfig) -> PredictorResult:
         "tuning_seconds": tuning_seconds if config.reuse_dir is None else 0.0,
         "timing": timing,
         "timing_repeats": TIMING_REPEATS,
-        "device": "cpu",
+        "device": "+".join(sorted(set(predictor_devices(model, config).values()))),
+        "target_devices": predictor_devices(model, config),
         "threads": 1,
         "machine": machine_context(),
         "python": platform.python_version(),

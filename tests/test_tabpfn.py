@@ -1,13 +1,11 @@
 """Contrato del comparador fijo y flujo sintético sin descargas ni pesos reales."""
 
-import json
 import multiprocessing as mp
 import os
 import sys
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from time import perf_counter, sleep
 from types import ModuleType
 from typing import Self
 
@@ -15,25 +13,14 @@ import joblib
 import numpy as np
 import pandas as pd
 import pytest
-from test_estandarizacion import analysis_data as analysis_data
-from test_estandarizacion import small_config
 
 from truss_research.cerchas.schemas import INPUT_COLUMNS, OUTPUT_COLUMNS
 from truss_research.datos.artefactos import read_artifact
-from truss_research.evaluacion.recursos import MeasurementParameters
-from truss_research.evaluacion.trabajos_analisis import execute_analysis_jobs
-from truss_research.optimizacion.ejecucion_cpu import ExecutionParameters
 from truss_research.optimizacion.estudio_estado import (
     StudyConfig,
     artifact_signatures,
-    load_study_config,
 )
 from truss_research.optimizacion.protocolo import load_protocol
-from truss_research.optimizacion.trabajos_predictivos import (
-    JobOutcome,
-    JobResources,
-    run_measured_job,
-)
 from truss_research.surrogates.configuracion import MODEL_NAMES, PredictorConfig
 from truss_research.surrogates.modelos import build_predictor
 from truss_research.surrogates.persistencia import load_model, save_model
@@ -230,148 +217,6 @@ class TimedJob:
     serial: bool = False
 
 
-def run_timed_job(job: TimedJob) -> JobOutcome:
-    def work() -> None:
-        start = perf_counter()
-        sleep(0.05)
-        job.destination.mkdir()
-        (job.destination / "times.json").write_text(
-            json.dumps({"start": start, "finish": perf_counter()})
-        )
-
-    return run_measured_job(
-        JobResources(
-            job.destination.name,
-            job.destination,
-            job.config.data_dir,
-            job.config.measurement,
-        ),
-        work,
-    )
-
-
-def test_serial_batch_after_parallel_jobs(analysis_data: Path, tmp_path: Path) -> None:
-    config = replace(
-        small_config(analysis_data, tmp_path / "study"),
-        execution=ExecutionParameters(cpu_workers=2),
-    )
-    root = tmp_path / "jobs"
-    jobs = [
-        TimedJob(config, root / name, serial)
-        for name, serial in (("a", False), ("b", False), ("c", True), ("d", True))
-    ]
-    execute_analysis_jobs(jobs, run_timed_job, root)
-    times = [json.loads((job.destination / "times.json").read_text()) for job in jobs]
-    assert times[2]["start"] >= max(row["finish"] for row in times[:2])
-    assert times[3]["start"] >= times[2]["finish"]
-    before = artifact_signatures(root / "c")
-    execute_analysis_jobs(jobs, run_timed_job, root)
-    assert artifact_signatures(root / "c") == before
-
-
-def test_eligible_tabpfn_complete_synthetic_flow(
-    fake_tabpfn: None,
-    analysis_data: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import truss_research.evaluacion.trabajos_analisis as jobs
-    from truss_research.evaluacion.auditoria_estudio import AuditConfig, audit_study
-    from truss_research.evaluacion.benchmark import run_benchmark
-    from truss_research.evaluacion.curvas_aprendizaje import run_learning_curves
-    from truss_research.evaluacion.informe_estudio import summarize_study
-    from truss_research.evaluacion.registro import results_root
-    from truss_research.evaluacion.seleccion_adaptativa import run_adaptive_selection
-    from truss_research.evaluacion.sensibilidad import run_sensitivity
-    from truss_research.optimizacion.estudio import run_study
-
-    monkeypatch.setattr(jobs, "cpu_pool", lambda execution: nullcontext(None))
-    checkpoint = tmp_path / "weights"
-    checkpoint.mkdir()
-    settings = TabPFNParameters(checkpoint_dir=str(checkpoint))
-    settings.checkpoint.write_bytes(b"synthetic_test_weights")
-    config = replace(
-        small_config(analysis_data, tmp_path / "study"),
-        tabpfn=settings,
-        models=("dummy", "tabpfn"),
-        calibration_required=True,
-        evolution=replace(
-            small_config(analysis_data, tmp_path / "study").evolution,
-            initialization_ablation=True,
-        ),
-        measurement=MeasurementParameters(
-            warmup=0,
-            inference_repeats=1,
-            selection_repeats=1,
-            batch_sizes=(1, 8),
-            cpu_repeats=1,
-            cpu_min_seconds=0.01,
-            cpu_min_ticks=1,
-            cpu_max_wall_seconds=0.5,
-            cpu_probe_seconds=0.05,
-        ),
-    )
-    config = replace(
-        config,
-        analysis=replace(
-            config.analysis,
-            generalization=replace(
-                config.analysis.generalization, control_models=("dummy", "tabpfn")
-            ),
-            learning_curves=replace(
-                config.analysis.learning_curves, models=("dummy", "tabpfn")
-            ),
-        ),
-    )
-    FakeScalarRegressor.fit_calls = 0
-    run_study(config, "validacion", False)
-    assert FakeScalarRegressor.fit_calls == 9
-    run_study(config, "validacion", True)
-    assert FakeScalarRegressor.fit_calls == 9
-    assert load_study_config(config.output_dir) == replace(
-        config,
-        output_dir=config.output_dir.resolve(),
-        data_dir=config.data_dir.resolve(),
-    )
-    from truss_research.evaluacion.informe_estudio import signed_records
-
-    tab_root = next(
-        Path(r["directory"])
-        for r in signed_records(config.output_dir)
-        if r["key"] == "predictor/tabpfn/42"
-    )
-    before = artifact_signatures(tab_root)
-    run_study(config, "final", True)
-    frozen = read_artifact(config.output_dir / "freeze.json")
-    assert "/predictor/tabpfn/" in frozen["winner"].replace("\\", "/")
-    assert artifact_signatures(tab_root) == before
-    root = results_root(config.output_dir)
-    run_adaptive_selection(config.output_dir, root / "adaptativa_001")
-    assert FakeScalarRegressor.fit_calls == 9
-    sensitivity = run_sensitivity(config.output_dir, root / "sensibilidad_001")
-    grouped = pd.read_csv(sensitivity / "generalization/selection.csv")
-    assert "tabpfn" in set(grouped.model)
-    assert grouped.loc[grouped.model.eq("tabpfn"), "selected_on_validation"].all()
-    run_learning_curves(config.output_dir, root / "curvas_001")
-    full = read_artifact(next((root / "curvas_001").glob("tabpfn_*_full/run.json")))
-    assert full["main_fit_reused"] is True
-    assert len(list((root / "curvas_001").glob("tabpfn_*/run.json"))) == 5
-    assert FakeScalarRegressor.fit_calls == 27
-    run_benchmark(config.output_dir, root / "benchmark_001")
-    report = summarize_study(config.output_dir, root / "informe_001")
-    predictive = pd.read_csv(report / "predictive_runs.csv")
-    assert "tabpfn" in set(predictive.model)
-    assert "tabpfn" in set(pd.read_csv(report / "ranking_runs.csv").model)
-    audit_study(AuditConfig(config.output_dir, analysis_data, root / "auditoria_001"))
-    for name in ("errors_by_distance", "prediction_utility"):
-        table = pd.read_csv(root / "auditoria_001" / f"{name}.csv")
-        assert "tabpfn" in set(table.model)
-    from truss_research.evaluacion.presentacion import export_notebooks
-
-    export_notebooks(config.output_dir, root / "presentacion_001")
-    assert len(list((root / "presentacion_001").glob("*.html"))) == 4
-
-
 def test_fixed_configuration_round_trip(tmp_path: Path) -> None:
     from truss_research.surrogates.experimentos import config_from_run, write_json
 
@@ -384,27 +229,8 @@ def test_fixed_configuration_round_trip(tmp_path: Path) -> None:
     assert restored.seed == 7 and restored.tabpfn == settings
 
 
-def test_plan_before_preparation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import truss_research.evaluacion.piloto_tabpfn as pilot
-    from truss_research.evaluacion.plan_analisis import analysis_plan
-
-    def missing_data(config: StudyConfig) -> dict:
-        raise FileNotFoundError("Datos pendientes de preparar")
-
-    monkeypatch.setattr(pilot, "require_pilot", missing_data)
-    config = load_protocol(
-        Path("config/study.json"), (tmp_path / "data", tmp_path / "study")
-    )
-    result = analysis_plan(config)
-    assert result["preflight"] == "requires_make_prepare"
-    assert result["tabpfn"]["pilot"]["status"] == "required"
-    assert not config.output_dir.exists() and not config.data_dir.exists()
-
-
 def test_pilot_required_and_tamper_detection(
-    analysis_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    prepared_temporal: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import truss_research.evaluacion.piloto_tabpfn as pilot
     from truss_research.surrogates.experimentos import write_json
@@ -412,7 +238,7 @@ def test_pilot_required_and_tamper_detection(
     monkeypatch.setattr(pilot, "verify_tabpfn", lambda settings: None)
     settings = TabPFNParameters(checkpoint_dir=str(tmp_path / "weights"))
     config = replace(
-        small_config(analysis_data, tmp_path / "study"),
+        small_config(prepared_temporal, tmp_path / "study"),
         tabpfn=settings,
         models=("dummy", "tabpfn"),
     )
@@ -441,7 +267,7 @@ def test_pilot_required_and_tamper_detection(
 
 
 def test_pilot_budget_stops_worker_and_preserves_failure(
-    analysis_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    prepared_temporal: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import truss_research.evaluacion.piloto_tabpfn as pilot
 
@@ -470,7 +296,7 @@ def test_pilot_budget_stops_worker_and_preserves_failure(
     )
     ticks = iter((0.0, 601.0, 602.0))
     monkeypatch.setattr(pilot, "perf_counter", lambda: next(ticks))
-    config = small_config(analysis_data, tmp_path / "study")
+    config = small_config(prepared_temporal, tmp_path / "study")
     root = tmp_path / "pilot"
     with pytest.raises(RuntimeError, match="diez minutos"):
         pilot.run_pilot(config, root)
@@ -522,4 +348,11 @@ def check_real_reload(directory: Path, case: tuple[pd.DataFrame, np.ndarray]) ->
     features, expected = case
     np.testing.assert_allclose(
         load_model(directory).predict(features), expected, rtol=1e-6, atol=1e-8
+    )
+
+
+def small_config(data: Path, output: Path) -> StudyConfig:
+    return replace(
+        load_protocol(Path("config/smoke.json"), (output, data)),
+        models=("dummy", "ridge", "tabpfn"),
     )

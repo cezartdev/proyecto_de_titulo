@@ -38,6 +38,7 @@ STAGES = (
     "smoke",
     "study",
     "final",
+    "explain",
     "benchmark",
     "report",
     "audit",
@@ -45,8 +46,9 @@ STAGES = (
 )
 
 
-def pipeline_stages(interpolation: bool = False) -> tuple[str, ...]:
-    return (*STAGES, "interpolation") if interpolation else STAGES
+def pipeline_stages(interpolation: bool = False, mode: str = "full") -> tuple[str, ...]:
+    stages = tuple(stage for stage in STAGES if mode == "full" or stage != "explain")
+    return (*stages, "interpolation") if interpolation else stages
 
 
 def positive_integer(value: str) -> int:
@@ -78,7 +80,7 @@ def arguments() -> argparse.Namespace:
         or Path(
             "artifacts/comprobacion_flujo"
             if result.mode == "check"
-            else "artifacts/estudio"
+            else "artifacts/comparacion_tres_objetivos_final_001"
         )
     ).resolve()
     result.config = (
@@ -332,7 +334,7 @@ def supervise(args: argparse.Namespace) -> int:
                     "study": str(args.estudio),
                     "config": str(args.config),
                     "max_seconds": args.max_seconds,
-                    "stages": pipeline_stages(interpolation),
+                    "stages": pipeline_stages(interpolation, args.mode),
                     "interpolation_destination": str(interpolation_dest)
                     if interpolation
                     else None,
@@ -342,7 +344,7 @@ def supervise(args: argparse.Namespace) -> int:
                         else "verify_saved_inputs_and_outputs"
                         if cached.get(name, {}).get("status") == "complete"
                         else "required"
-                        for name in pipeline_stages(interpolation)
+                        for name in pipeline_stages(interpolation, args.mode)
                     },
                 },
                 indent=2,

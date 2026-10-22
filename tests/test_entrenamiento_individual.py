@@ -1,20 +1,18 @@
 """Contrato del entrenamiento manual aislado, sin ejecutar cargas extensas."""
 
-import json
 from pathlib import Path
 
 import pytest
 
 from truss_research.datos.artefactos import read_artifact
 from truss_research.evaluacion.entrenamiento_individual import (
+    TrainingModel,
     TrainingRequest,
     run_individual_training,
     training_config,
     training_plan,
 )
-from truss_research.optimizacion.variantes_rl import PolicyVariant
 from truss_research.surrogates.configuracion import ModelName, PredictorConfig
-from truss_research.surrogates.experimentos import data_signature, write_json
 
 
 def test_plan_preserves_budget_without_creating_files(tmp_path: Path) -> None:
@@ -32,9 +30,8 @@ def test_plan_preserves_budget_without_creating_files(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "model",
     [
-        "rl",
-        "rl_dueling",
-        "rl_ppo",
+        "evolution_rl",
+        "evolution_rl_assisted",
         "evolution_contextual_bandit",
         "evolution_contextual_bandit_assisted",
     ],
@@ -105,53 +102,6 @@ def test_failed_training_is_recorded(
     assert read_artifact(tmp_path / "failed/summary.json")["status"] == "failed"
 
 
-def test_rl_dispatch_preserves_cpu_and_protocol(
-    design_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from truss_research.optimizacion.politica import PolicyConfig
-
-    protocol = tmp_path / "catalog.json"
-    protocol.write_text(
-        json.dumps(
-            {
-                "extends": str(Path("config/study.json").resolve()),
-                "study": {
-                    "experiment": "catalog",
-                    "split_protocol": "design",
-                    "budgets": [12, 24],
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    predictor = tmp_path / "predictor"
-    predictor.mkdir()
-    (predictor / "model.joblib").write_bytes(b"unused_test_descriptor")
-    write_json(
-        predictor / "run.json", {"dataset_signature": data_signature(design_data)}
-    )
-    captured: list[PolicyConfig] = []
-    monkeypatch.setattr(
-        "truss_research.evaluacion.entrenamiento_individual.train_policy",
-        captured.append,
-    )
-    request = TrainingRequest(
-        "rl_ppo",
-        protocol=protocol,
-        data_dir=design_data,
-        predictor_dir=predictor,
-        destination=tmp_path / "ppo",
-        seed=99,
-    )
-    run_individual_training(request)
-    assert len(captured) == 1
-    assert captured[0].device == "cpu" and captured[0].algorithm == "ppo"
-    assert captured[0].seed == 99 and captured[0].parameters.transitions == 50_000
-    assert captured[0].validation_seeds == (42, 43, 44, 45, 46)
-    assert captured[0].predictor_dir == predictor.resolve()
-
-
 def test_load_test_protocol_matches_manual_budget() -> None:
     from truss_research.evaluacion.carga_cpu import load_cpu_protocol
 
@@ -174,9 +124,11 @@ def test_training_overrides_preserve_canonical_protocol(tmp_path: Path) -> None:
     assert configured.seeds == original.seeds
 
 
-@pytest.mark.parametrize("model", ["targetwise", "rl", "rl_ppo"])
+@pytest.mark.parametrize(
+    "model", ["targetwise", "evolution_rl", "evolution_contextual_bandit"]
+)
 def test_fit_mode_rejects_models_with_internal_selection(
-    model: ModelName | PolicyVariant,
+    model: TrainingModel,
 ) -> None:
     with pytest.raises(ValueError, match="requieren protocol"):
         TrainingRequest(model, mode="fit")

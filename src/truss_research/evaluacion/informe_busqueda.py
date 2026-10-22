@@ -1,15 +1,15 @@
 """Informes de búsqueda sobre artefactos cerrados, sin volver a entrenar ni evaluar."""
 
-import html
-import json
 from math import ceil
 from pathlib import Path
 
 import pandas as pd
 
 from truss_research.datos.artefactos import read_artifact
+from truss_research.datos.preparacion import source_digest
 from truss_research.evaluacion.benchmark_multiobjetivo import (
     export_benchmark_reports,
+    objective_space,
     verify_benchmark,
 )
 from truss_research.evaluacion.busqueda_evolutiva import (
@@ -19,19 +19,15 @@ from truss_research.evaluacion.busqueda_evolutiva import (
 from truss_research.evaluacion.comparacion_predictiva import (
     export_predictive_comparison,
 )
+from truss_research.evaluacion.informe_costos import export_resource_report
+from truss_research.evaluacion.robustez import export_convergence
 from truss_research.optimizacion.estrategias_busqueda import STRATEGY_DEFINITIONS
 from truss_research.optimizacion.estudio_estado import (
+    StudyConfig,
     artifact_signatures,
     load_study_config,
 )
 from truss_research.surrogates.experimentos import write_json
-
-NOTEBOOK_TOPICS = (
-    "datos_temporales",
-    "predictores",
-    "busqueda_historica",
-    "busqueda_generativa",
-)
 
 
 def verify_closed_search(study: Path) -> None:
@@ -68,6 +64,8 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
     destination.mkdir(parents=True)
     config = load_study_config(study)
     root = study / SEARCH_DIRECTORY
+    if kind == "auditoria":
+        return export_integrity(study, destination)
     summaries = pd.concat(
         [pd.read_csv(root / name / "summary.csv") for name in ("validation", "test")]
     )
@@ -93,8 +91,12 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
         mean_topology_count=("archive_topology_count", "mean"),
     )
     summary.to_csv(destination / "comparison.csv", index=False)
+    export_search_details((root, config), summaries, destination)
     export_predictive_comparison(study, destination)
     export_benchmark_reports(root / "predictor_utility", destination)
+    from truss_research.evaluacion.informe_explicabilidad import export_explanations
+
+    export_explanations(study, destination)
     predictive_metrics = [
         pd.read_csv(path) for path in (root / "test_predictors").glob("*/metrics.csv")
     ]
@@ -133,6 +135,8 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
             for path, row in policy_costs
         ]
     )
+    if costs.empty:
+        costs = pd.DataFrame(columns=["policy", "seed", "wall_seconds", "cpu_seconds"])
     costs.to_csv(destination / "policy_costs.csv", index=False)
     amortization: list[dict[str, str | int | float | None]] = []
     final = summary.loc[summary.split.eq("test")]
@@ -162,7 +166,19 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
                     "scope": "exploratory_policy_cost_only_shared_predictors_excluded_no_fem",
                 }
             )
-    pd.DataFrame(amortization).to_csv(destination / "amortization.csv", index=False)
+    pd.DataFrame(
+        amortization,
+        columns=[
+            "experiment",
+            "budget",
+            "policy",
+            "baseline",
+            "extra_policy_training_seconds",
+            "search_saving_seconds",
+            "searches_to_amortize",
+            "scope",
+        ],
+    ).to_csv(destination / "amortization.csv", index=False)
     summaries.groupby(
         ["split", "experiment", "strategy", "budget", "termination"], as_index=False
     ).size().to_csv(destination / "termination_counts.csv", index=False)
@@ -182,6 +198,8 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
         ]
     ].to_csv(destination / "target_attainment.csv", index=False)
     state = read_artifact(study / "study.json")
+    resources_complete = export_resource_report(study, destination)
+    export_convergence(state, destination)
     predictors = [
         read_artifact(Path(task["directory"]) / "run.json")
         for task in state["tasks"]
@@ -200,6 +218,8 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
                         "tuning_seconds",
                         "crossfit_seconds",
                         "fit_seconds",
+                        "reuse_seconds",
+                        "device",
                         "requested_trials",
                         "trial_count",
                         "nested_trial_count",
@@ -218,6 +238,8 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
             "tuning_seconds",
             "crossfit_seconds",
             "fit_seconds",
+            "reuse_seconds",
+            "device",
             "requested_trials",
             "trial_count",
             "nested_trial_count",
@@ -225,6 +247,19 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
             "search_reused",
         ],
     ).to_csv(destination / "predictor_costs.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "model": row["config"]["model"],
+                "seed": row["config"]["seed"],
+                "target": target,
+                "device": device,
+            }
+            for row in predictors
+            for target, device in row.get("target_devices", {}).items()
+        ],
+        columns=["model", "seed", "target", "device"],
+    ).to_csv(destination / "predictor_devices.csv", index=False)
     report = (
         "# Comparación de predictores y propuesta de búsqueda guiada\n\n"
         "El resultado principal es la utilidad multiobjetivo de cada regresor: predictor_utility_summary.csv "
@@ -252,7 +287,9 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
         "semillas de la familia elegida; el desacuerdo puede ser cero en modelos deterministas "
         "y no constituye incertidumbre física calibrada.\n\n"
         "predictive_inference_costs.csv separa latencia individual y por lote. "
-        "predictor_costs.csv registra intentos y ajustes anidados; treinta intentos no "
+        "predictor_costs.csv registra ajustes anidados y dispositivo efectivo; resource_tasks.csv "
+        "consolida intentos, CPU y memoria, y research_cost.csv distingue duración del coordinador predictivo "
+        "de suma de duraciones de trabajos. Treinta intentos no "
         "garantizan igual tiempo de cómputo entre familias. TabPFN incorpora preentrenamiento "
         "externo cuyo costo no se midió; Targetwise incluye selección adicional por respuesta.\n\n"
         "Las diferencias e intervalos pareados están en evolution/test/paired_intervals.csv. "
@@ -261,87 +298,157 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
         "Los intervalos son exploratorios, sin corrección por comparaciones múltiples.\n\n"
         "El tiempo de entrenamiento de políticas se registra aparte del tiempo por búsqueda. "
         "No sumar fases anidadas del entrenamiento predictivo.\n"
+        "\nSHAP es un análisis complementario de validación. Si existe una etapa completa compatible, "
+        "se adjuntan shap_global.csv, shap_examples.csv, shap_costs.csv y shap_stability.csv. "
+        "Su ausencia se resuelve con make explain y una nueva exportación; no se calcula al presentar. "
+        "Las atribuciones describen predicciones, no efectos causales ni seguridad estructural.\n"
     )
     (destination / "RESULTS.md").write_text(report, encoding="utf-8")
-    if kind == "notebooks":
-        export_notebooks(destination, (study, summary))
     write_json(
         destination / "technical_closure.json",
         {
             "technical_complete": True,
+            "resources_complete": resources_complete,
             "evidence": "historical_and_predictive_separate",
             "source_study": str(study),
             "config_experiment": config.experiment,
             "structural_certification": False,
         },
     )
-    write_json(
-        destination / "provenance.json",
-        {
-            "study": str(study),
-            "kind": kind,
-            "frozen": read_artifact(study / "freeze.json"),
-            "outputs": artifact_signatures(destination),
-        },
-    )
+    write_export_provenance(study, destination, kind)
+    if kind == "notebooks":
+        from truss_research.evaluacion.presentacion import render_notebooks
+
+        render_notebooks(study, destination)
+        write_export_provenance(study, destination, kind)
     return destination
 
 
-def export_notebooks(destination: Path, content: tuple[Path, pd.DataFrame]) -> None:
-    """Presenta datos exportados; no ejecuta código ni modifica el estudio."""
-    study, summary = content
-    for topic in NOTEBOOK_TOPICS:
-        title = topic.replace("_", " ")
-        text = f"# {title}\n\nEstudio: {study.name}.\n\n"
-        text += "A: evidencia histórica proyectada. B: calidad estimada, pendiente de FEM.\n\n"
-        selected = summary
-        if topic == "datos_temporales":
-            config = load_study_config(study)
-            manifest = read_artifact(config.data_dir / "manifest.json")
-            selected = pd.DataFrame(
-                [
-                    {
-                        "split": name,
-                        "rows": diagnostic["rows"],
-                        "min_generation": min(diagnostic["generations"]),
-                        "max_generation": max(diagnostic["generations"]),
-                    }
-                    for name, diagnostic in manifest["diagnostics"].items()
-                ]
-            )
-            text += "Las soluciones son índices poblacionales, no un orden de evaluación.\n\n"
-        if topic == "predictores":
-            selected = pd.read_csv(destination / "predictor_utility_summary.csv")
-            text += "Comparación principal por HV/AUC observado. Intervalos de utilidad en predictor_utility_paired_intervals.csv; diferencias de error en predictive_paired_errors.csv y cobertura en category_coverage.csv. No se declara equivalencia ni seguridad estructural.\n\n"
-        if topic.startswith("busqueda_"):
-            selected = summary.loc[
-                summary.experiment.eq("A" if topic.endswith("historica") else "B")
-            ]
-        csv_text = selected.to_csv(index=False)
-        notebook = {
-            "nbformat": 4,
-            "nbformat_minor": 5,
-            "metadata": {},
-            "cells": [
-                {"cell_type": "markdown", "metadata": {}, "source": text},
-                {
-                    "cell_type": "markdown",
-                    "metadata": {},
-                    "source": "```csv\n" + csv_text + "```",
-                },
+def export_integrity(study: Path, destination: Path) -> Path:
+    """Conserva el resultado de las verificaciones sin recalcular tablas de comparación."""
+    from truss_research.surrogates.experimentos import data_signature
+
+    resources_complete = export_resource_report(study, destination)
+    freeze = read_artifact(study / "freeze.json")
+    config = load_study_config(study)
+    write_json(
+        destination / "integrity.json",
+        {
+            "signature": freeze["signature"],
+            "dataset_signature": data_signature(config.data_dir),
+            "verified_models": len(freeze["models"]),
+            "verified_splits": ["validation", "test"],
+            "checks": [
+                "frozen_models",
+                "policies",
+                "validation",
+                "test_episodes",
+                "predictor_utility",
+                "resource_signatures",
             ],
-        }
-        (destination / f"{topic}.ipynb").write_text(
-            json.dumps(notebook, ensure_ascii=False, indent=2), encoding="utf-8"
+            "retrained": False,
+        },
+    )
+    write_json(
+        destination / "technical_closure.json",
+        {
+            "technical_complete": True,
+            "resources_complete": resources_complete,
+            "source_study": str(study),
+            "config_experiment": config.experiment,
+            "structural_certification": False,
+        },
+    )
+    write_export_provenance(study, destination, "auditoria")
+    return destination
+
+
+def export_search_details(
+    context: tuple[Path, StudyConfig], summaries: pd.DataFrame, destination: Path
+) -> None:
+    """Exporta trazas y archivos representativos ya calculados para sus figuras."""
+    from truss_research.cerchas.schemas import OUTPUT_COLUMNS
+    from truss_research.datos.procesados import load_design_split
+
+    root, config = context
+    keys = ["split", "experiment", "strategy", "budget", "scenario", "policy_seed"]
+    columns = [*keys, "query", "hypervolume"]
+    initial = summaries[[*keys, "initial_hypervolume"]].rename(
+        columns={"initial_hypervolume": "hypervolume"}
+    )
+    traces = [initial.assign(query=config.evolution.population_size)]
+    fronts: list[pd.DataFrame] = []
+    space = objective_space(load_design_split(config.data_dir).training, config)
+    for split in ("validation", "test"):
+        decisions = pd.read_json(root / split / "decisions.jsonl", lines=True)
+        decisions = decisions.rename(columns={"evaluation": "query"}).reindex(
+            columns=columns
         )
-        (destination / f"{topic}.html").write_text(
-            "<!doctype html><meta charset='utf-8'><title>"
-            + html.escape(title)
-            + "</title><h1>"
-            + html.escape(title)
-            + "</h1><p>"
-            + html.escape(text)
-            + "</p>"
-            + selected.to_html(index=False),
-            encoding="utf-8",
-        )
+        traces.append(decisions.dropna(subset=["query"]))
+        for experiment in ("A", "B"):
+            for strategy in config.search.strategies:
+                path = (
+                    root
+                    / split
+                    / f"archive_{experiment}_{strategy}_{max(config.budgets)}_0_{config.representative_seed}.csv"
+                )
+                table = pd.read_csv(path)
+                front = pd.DataFrame(
+                    space.front(table[list(OUTPUT_COLUMNS)].to_numpy()),
+                    columns=OUTPUT_COLUMNS,
+                )
+                table["is_pareto"] = pd.MultiIndex.from_frame(
+                    table[list(OUTPUT_COLUMNS)]
+                ).isin(pd.MultiIndex.from_frame(front))
+                fronts.append(
+                    table.assign(
+                        split=split,
+                        experiment=experiment,
+                        strategy=strategy,
+                        budget=max(config.budgets),
+                        scenario=0,
+                        policy_seed=config.representative_seed,
+                    )
+                )
+    pd.concat(traces, ignore_index=True)[columns].to_csv(
+        destination / "search_curves.csv", index=False
+    )
+    pd.concat(fronts, ignore_index=True).to_csv(
+        destination / "search_fronts.csv", index=False
+    )
+
+
+def write_export_provenance(study: Path, destination: Path, kind: str) -> None:
+    """Firma las salidas de presentación sin incluir recursivamente su manifiesto."""
+    from truss_research.datos.procedencia import confirmations_digest
+    from truss_research.evaluacion.presentacion import (
+        NOTEBOOK_DIRECTORY,
+        NOTEBOOK_NAMES,
+    )
+
+    write_json(
+        destination / "provenance.json",
+        {
+            "study": str(study.resolve()),
+            "kind": kind,
+            "frozen": read_artifact(study / "freeze.json"),
+            "physical_provenance_signature": confirmations_digest(),
+            "presentation_complete": kind != "notebooks"
+            or all(
+                (destination / f"{name}.{extension}").is_file()
+                for name in NOTEBOOK_NAMES
+                for extension in ("ipynb", "html")
+            ),
+            "notebook_sources": {
+                f"{name}.ipynb": source_digest(NOTEBOOK_DIRECTORY / f"{name}.ipynb")
+                for name in NOTEBOOK_NAMES
+            }
+            if kind == "notebooks"
+            else {},
+            "outputs": {
+                name: digest
+                for name, digest in artifact_signatures(destination).items()
+                if name != "provenance.json"
+            },
+        },
+    )

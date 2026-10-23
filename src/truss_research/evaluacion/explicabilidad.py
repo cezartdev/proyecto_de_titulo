@@ -136,6 +136,7 @@ def explanation_plan(request: ExplanationRequest) -> dict[str, JsonValue]:
     destination = request.destination or results_root(request.study) / (
         "explicabilidad_001" if request.mode == "full" else "explicabilidad_piloto_001"
     )
+    destination = destination.resolve()
     references = [
         row
         for row in predictor_records(request.study)

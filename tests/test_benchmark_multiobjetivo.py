@@ -137,6 +137,64 @@ def test_paired_intervals_average_seed_replicas_and_cache_rejects_changes(
         )
 
 
+def test_cached_benchmark_survives_only_approved_operational_revision(
+    small_case: tuple, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from truss_research.datos.preparacion import source_digest
+    from truss_research.evaluacion import benchmark_multiobjetivo as benchmark
+    from truss_research.optimizacion import estudio_estado as state
+    from truss_research.surrogates.experimentos import write_json
+
+    training, predictions, config = small_case
+    config.output_dir.mkdir()
+    saved = {"schema_version": state.STUDY_SCHEMA_VERSION, "source_signature": "before"}
+    write_json(config.output_dir / "study.json", saved)
+    monkeypatch.setattr(state, "source_signature", lambda: "before")
+    monkeypatch.setattr(benchmark, "source_signature", lambda: "before")
+    destination = tmp_path / "utility"
+    expected = write_benchmark((training, predictions), config, destination)
+    original_files = state.artifact_signatures(destination)
+    receipt = config.output_dir / "compatibility.json"
+    write_json(
+        receipt,
+        {
+            "scope": "io_only",
+            "previous_source_signature": "before",
+            "current_source_signature": "io_revision",
+        },
+    )
+    saved["source_compatibility"] = {
+        "file": receipt.name,
+        "signature": source_digest(receipt),
+    }
+    write_json(config.output_dir / "study.json", saved)
+    monkeypatch.setattr(state, "source_signature", lambda: "io_revision")
+    monkeypatch.setattr(benchmark, "source_signature", lambda: "io_revision")
+
+    def forbidden(*args):
+        raise AssertionError("El benchmark guardado no debe recalcularse")
+
+    monkeypatch.setattr(benchmark, "catalogue_comparison", forbidden)
+    actual = write_benchmark((training, predictions), config, destination)
+    pd.testing.assert_frame_equal(actual, expected)
+    assert state.artifact_signatures(destination) == original_files
+    changed = predictions.copy()
+    changed.loc[changed.index[0], "pred_mass_kg"] += 1
+    with pytest.raises(ValueError, match="otros datos"):
+        write_benchmark((training, changed), config, destination)
+    with pytest.raises(ValueError, match="otros datos"):
+        write_benchmark(
+            (training, predictions), replace(config, budgets=(6, 10)), destination
+        )
+    monkeypatch.setattr(state, "source_signature", lambda: "unreviewed_change")
+    with pytest.raises(ValueError, match="revisión operativa"):
+        write_benchmark((training, predictions), config, destination)
+    monkeypatch.setattr(state, "source_signature", lambda: "io_revision")
+    (destination / "summary.csv").write_text("corrupted")
+    with pytest.raises(ValueError, match="Cambi"):
+        write_benchmark((training, predictions), config, destination)
+
+
 def test_family_selection_prioritizes_validation_auc_over_mae(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

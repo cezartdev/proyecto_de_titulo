@@ -84,7 +84,14 @@ def presentation(tmp_path: Path) -> tuple[Path, Path]:
     )
     pd.DataFrame(
         [
-            {"split": split, "model": model, "budget": budget, "mean_auc": 1.0}
+            {
+                "split": split,
+                "model": model,
+                "role": "regressor",
+                "budget": budget,
+                "mean_auc": 1.0,
+                "mean_normalized_auc": 1.0,
+            }
             for split in ("validation", "test")
             for model in ("dummy", "ridge")
             for budget in config.budgets
@@ -147,11 +154,37 @@ def presentation(tmp_path: Path) -> tuple[Path, Path]:
     pd.DataFrame(
         {
             "model": ["dummy"],
+            "seed": [42],
+            "device": ["cpu"],
             "tuning_seconds": [0.1],
             "crossfit_seconds": [0.2],
             "fit_seconds": [0.1],
         }
     ).to_csv(report / "predictor_costs.csv", index=False)
+    pd.DataFrame(
+        [
+            {"model": model, "split": split, "mean": error}
+            for model, error in (("dummy", 0.1), ("ridge", 0.2))
+            for split in ("validation", "test")
+        ]
+    ).to_csv(report / "predictive_model_summary.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "model": "dummy",
+                "seed": 42,
+                "split": split,
+                "individual_median_seconds": 0.01,
+                "batch_median_seconds": 0.02,
+                "batch_rows": 2,
+            }
+            for split in ("validation", "test")
+        ]
+    ).to_csv(report / "predictive_inference_costs.csv", index=False)
+    (study / "evolution/test").mkdir(parents=True)
+    pd.DataFrame(columns=["budget", "strategy", "baseline", "experiment"]).to_csv(
+        study / "evolution/test/paired_intervals.csv", index=False
+    )
     pd.DataFrame(
         [
             {
@@ -193,6 +226,17 @@ def presentation(tmp_path: Path) -> tuple[Path, Path]:
     return study, report
 
 
+def test_canonical_notebook_sources_preserve_spanish_characters() -> None:
+    import re
+
+    for name in NOTEBOOK_NAMES:
+        notebook = nbformat.read(NOTEBOOK_DIRECTORY / f"{name}.ipynb", as_version=4)
+        text = "\n".join(cell.source for cell in notebook.cells)
+        assert "validación" in text
+        assert "\ufffd" not in text
+        assert re.search(r"\w\?\w", text) is None
+
+
 def test_canonical_notebooks_execute_only_presentation_cells(
     presentation: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -226,6 +270,58 @@ def test_canonical_notebooks_execute_only_presentation_cells(
         plt.close("all")
     assert artifact_signatures(study) == before
     assert artifact_signatures(report) == tables_before
+
+
+def test_notebook_discovers_unique_closed_study_without_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from truss_research.evaluacion import presentacion
+
+    monkeypatch.delenv("TRUSS_STUDY", raising=False)
+    monkeypatch.setattr(presentacion, "NOTEBOOK_DIRECTORY", tmp_path / "notebooks")
+    study = tmp_path / "artifacts/campana_002"
+    (study / "evolution").mkdir(parents=True)
+    write_json(study / "study.json", {})
+    write_json(study / "evolution/closed.json", {"phase": "complete"})
+    incomplete = tmp_path / "artifacts/incompleto"
+    incomplete.mkdir()
+    write_json(incomplete / "study.json", {})
+    assert presentacion.resolve_notebook_study() == study.resolve()
+    monkeypatch.setenv("TRUSS_STUDY", str(tmp_path / "inexistente"))
+    with pytest.raises(ValueError, match="No hay estudio"):
+        presentacion.resolve_notebook_study()
+    monkeypatch.setenv("TRUSS_STUDY", str(study))
+    assert presentacion.resolve_notebook_study() == study.resolve()
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_notebook_discovery_requires_unambiguous_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, count: int
+) -> None:
+    from truss_research.evaluacion import presentacion
+
+    monkeypatch.delenv("TRUSS_STUDY", raising=False)
+    monkeypatch.setattr(presentacion, "NOTEBOOK_DIRECTORY", tmp_path / "notebooks")
+    for index in range(count):
+        study = tmp_path / "artifacts" / f"campana_{index}"
+        (study / "evolution").mkdir(parents=True)
+        write_json(study / "study.json", {})
+        write_json(study / "evolution/closed.json", {"phase": "complete"})
+    with pytest.raises(ValueError, match="TRUSS_STUDY"):
+        presentacion.resolve_notebook_study()
+
+
+def test_notebook_preserves_existing_default_study(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from truss_research.evaluacion import presentacion
+
+    monkeypatch.delenv("TRUSS_STUDY", raising=False)
+    monkeypatch.setattr(presentacion, "NOTEBOOK_DIRECTORY", tmp_path / "notebooks")
+    default = tmp_path / presentacion.DEFAULT_STUDY
+    default.mkdir(parents=True)
+    write_json(default / "study.json", {})
+    assert presentacion.resolve_notebook_study() == default.resolve()
 
 
 def test_report_integrity_and_explicit_context(

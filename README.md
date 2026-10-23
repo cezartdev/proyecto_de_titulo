@@ -82,6 +82,8 @@ make dev
 
 SHAP explica validación usando referencia de entrenamiento y predictores guardados. El piloto no se presenta como resultado completo. `config/explain.json` configura casos, referencia, rondas y lotes; `winner_seeds=true` añade las semillas de la familia ganadora. `EXPLAIN_DEST=reports/<estudio>/explicabilidad_002` permite otra etapa independiente. Las atribuciones no demuestran causalidad física ni seguridad.
 
+La inferencia TabPFN de SHAP usa lotes de tamaño fijo (`batch_size`), completa el último repitiendo su última fila y descarta las predicciones de relleno. Se aplica tanto a las máscaras como a las predicciones de reconstrucción, incluidos los componentes Targetwise, para evitar diferencias entre tamaños de lote. Esta política se registra en `run.json`; los contadores de filas solicitadas excluyen el relleno. No modifica los predictores guardados ni las evaluaciones de la campaña. Los checkpoints anteriores a esta política no se reutilizan para TabPFN.
+
 Los resultados incluyen tablas de utilidad/error/costo, todos los intentos predictivos registrados, dispositivo por respuesta y cobertura de recursos. La presentación muestra validación y prueba, diagnósticos observado/predicho y residuos, curvas HV y frentes A/B. Se exportan cuatro notebooks, cuatro HTML, figuras PNG/SVG y `figures.csv`. Revisar las firmas, ausencia de errores, unidades, presupuesto efectivo y `resources_complete` en `technical_closure.json`; un cierre científico no garantiza cobertura completa de las mediciones. [reports/README.md](reports/README.md) detalla los archivos y [notebooks/README.md](notebooks/README.md) las fuentes canónicas.
 
 ## Recorrido automático y recuperación
@@ -101,7 +103,36 @@ make run-all RUN_MODE=check ACCELERATOR=cpu CPU_WORKERS=2 MAX_SECONDS=600
 
 Este modo sigue realizando trabajo y puede ser costoso; omite SHAP. `make stop` detiene el supervisor y sus procesos. No usar dos coordinadores sobre el mismo estudio ni `make -j`.
 
-Repetir etapas conserva tareas y episodios completos compatibles. No hay migración de campañas del protocolo retirado: estudios usan esquema 20 y predictores esquema 9. Cambios de código, parámetros, datos o dependencias requieren destinos nuevos cuando cambian sus firmas. Conservar los artefactos anteriores como evidencia; no editar sus firmas para forzar reanudación. `make reset-study DRY_RUN=1` muestra una limpieza explícita que también alcanza datos y pilotos compartidos; no usarla como paso rutinario.
+Repetir etapas conserva tareas y episodios completos compatibles. No hay migración de campañas del protocolo retirado: estudios usan esquema 20 y predictores esquema 9. Cambios de código, parámetros, datos o dependencias requieren destinos nuevos cuando cambian sus firmas. Una corrección exclusivamente operativa puede conservar un estudio mediante una constancia local `source_compatibility`, con firmas exactas de ambas revisiones y evidencia de revisión; cualquier cambio posterior de código vuelve a rechazarse. No editar la firma original para forzar reanudación. `make reset-study DRY_RUN=1` muestra una limpieza explícita que también alcanza datos y pilotos compartidos; no usarla como paso rutinario.
+
+## Políticas paralelas y reutilización de predictores completos
+
+En Windows, el reemplazo atómico de archivos reintenta bloqueos transitorios durante unos 25 segundos. El manifiesto de políticas actualiza progreso cada diez segundos y al cambiar de estado; un bloqueo persistente en una actualización periódica se registra y difiere, sin cancelar los trabajadores. Los guardados obligatorios de estado y checkpoints siguen fallando explícitamente si el bloqueo persiste. OneDrive y otros procesos pueden retener archivos temporalmente; para corridas extensas conviene pausar la sincronización de OneDrive durante la ejecución.
+
+El cierre `final` usa los mismos reintentos al publicar los directorios de predicciones de prueba. Si el bloqueo persiste, conserva el intento bajo `evolution/test_predictor_attempts/` y termina con error. Un intento con `complete.json` debe verificarse antes de recuperar su publicación; no borrar ni sobrescribir resultados existentes. Los directorios ya publicados y verificados se reutilizan al reanudar.
+
+La entrada CLI comparte firmas SHA en memoria durante cada ejecución: las verificaciones repetidas reutilizan la lectura mientras identidad, tamaño y tiempos del archivo coincidan. Una modificación invalida la entrada y cada nuevo comando empieza sin caché. El arranque todavía lee los predictores completos una vez para verificar integridad; no vuelve a entrenarlos.
+
+La fase de políticas usa procesos independientes por variante y semilla, hasta `CPU_WORKERS`, con un hilo interno por proceso y admisión por RAM. El coordinador escribe el estado general; cada trabajador conserva su directorio y checkpoint. Si el evaluador predictivo requiere CUDA, la concurrencia se limita a un proceso para no multiplicar el uso de GPU. Las actualizaciones dentro de una política conservan su secuencia original.
+
+El estado está en `evolution/policy_execution/manifest.json`: muestra trabajos activos, pendientes, completos, intentos y último número de transiciones guardado. Los CSV de telemetría registran CPU, RAM y concurrencia. Ctrl+C detiene la admisión y cierra los trabajadores; repetir el mismo `make study` reutiliza políticas completas y recupera las parciales desde su último checkpoint válido. No abrir otro coordinador sobre el mismo estudio.
+
+Para conservar predictores entrenados antes de este cambio, copiar sus artefactos a un **destino nuevo e independiente**. La importación exige un inventario del código tomado antes de modificarlo y ligado a la firma del estudio original; valida los artefactos, datos y entorno, y rechaza cambios ajenos a la orquestación. Copia modelos, preparaciones, búsquedas y mediciones; verifica sus firmas y actualiza las rutas de los manifiestos sin alterar los pesos. Conserva las firmas originales como evidencia y registra las firmas de los metadatos reubicados. No ajusta modelos ni importa políticas.
+
+La evidencia histórica, las tablas originales de validación y los costos descartados quedan dentro de `predictor_origin/` y `predictor_import.json`. Después de completar y verificar la importación, el nuevo estudio funciona aunque la carpeta original ya no esté disponible: ninguna reanudación, evaluación o exportación necesita leerla. Se mantienen las dependencias habituales del repositorio, como los datos preparados y los pesos compartidos de TabPFN.
+
+La campaña actual ya importó los predictores a `artifacts/comparacion_tres_objetivos_final_002`. No repetir la importación. Para continuar desde la raíz:
+
+```powershell
+make plan ESTUDIO=artifacts/comparacion_tres_objetivos_final_002 ACCELERATOR=cuda CPU_WORKERS=12
+make study ESTUDIO=artifacts/comparacion_tres_objetivos_final_002 ACCELERATOR=cuda CPU_WORKERS=12
+```
+
+Las 20 políticas empiezan desde cero. La validación predictiva se regenera desde las predicciones copiadas y se comprueba contra las tablas y selección archivadas localmente. Los predictores completos importados no requieren repetir el piloto TabPFN ni las búsquedas. Conservar `ESTUDIO=artifacts/comparacion_tres_objetivos_final_002` en `final`, `explain`, `benchmark`, `report`, `audit`, `notebooks` y `dev`: los valores predeterminados de una campaña nueva siguen usando el nombre `_001`. No usar `run-all` para esta continuación: sus etapas previas no son necesarias.
+
+La verificación de autonomía y las pruebas vigentes están bajo `reports/comparacion_tres_objetivos_final_002/`. La limpieza del estudio `_001`, su smoke y los reportes anteriores ya terminó. Conservar `_002`, los datos, pesos compartidos y la evidencia histórica ya copiada. Las importaciones futuras requieren un origen disponible, un destino nuevo y un inventario previo mediante `SOURCE_STUDY`, `ESTUDIO` y `SOURCE_MANIFEST`; la campaña actual no necesita los archivos temporales de aquella importación.
+
+Las exportaciones separan `policy_execution.csv` (duración transcurrida por invocación), `policy_resources.csv` (CPU/RAM y duración de todos los intentos), `policy_costs.csv` (costos acumulados de los checkpoints) y la telemetría. Son vistas del mismo trabajo y no deben sumarse entre sí. `predictor_import.json` documenta el entrenamiento predictivo reutilizado; `discarded_policy_costs.csv` conserva el intento secuencial como antecedente excluido de la comparación de políticas nuevas. Su duración es un límite inferior hasta el último checkpoint, no una medición completa de la interrupción.
 
 ## Opciones adicionales
 

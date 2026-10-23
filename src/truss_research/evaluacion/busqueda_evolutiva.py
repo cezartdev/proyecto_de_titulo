@@ -16,7 +16,7 @@ from truss_research.cerchas.schemas import (
     OUTPUT_COLUMNS,
     WEB_CONFIG_VALUES,
 )
-from truss_research.datos.artefactos import read_artifact
+from truss_research.datos.artefactos import read_artifact, replace_artifact
 from truss_research.datos.distancias import design_distances
 from truss_research.datos.preparacion import source_digest
 from truss_research.datos.procesados import (
@@ -36,7 +36,6 @@ from truss_research.optimizacion.entrenamiento_propuestas import (
     ProposalTrainingConfig,
     load_proposal_policy,
     predicted_auc,
-    train_proposal_policy,
 )
 from truss_research.optimizacion.estrategias_busqueda import STRATEGY_DEFINITIONS
 from truss_research.optimizacion.estudio_estado import (
@@ -229,10 +228,12 @@ def build_context(config: StudyConfig, paths: tuple[Path, Path]) -> SearchContex
 
 
 def campaign_identity(config: StudyConfig, paths: dict[str, Path]) -> str:
+    from truss_research.optimizacion.estudio_estado import study_source_signature
+
     payload = {
         "version": SEARCH_VERSION,
         "config": asdict(config),
-        "source": source_signature(),
+        "source": study_source_signature(config.output_dir),
         "dataset": data_signature(config.data_dir),
         "versions": environment_versions(),
         "models": {name: artifact_signatures(path) for name, path in paths.items()},
@@ -620,7 +621,7 @@ def close_predictors(config: StudyConfig) -> None:
             attempt / "complete.json",
             {"files": artifact_signatures(attempt), "complete": True},
         )
-        attempt.rename(destination)
+        replace_artifact(attempt, destination)
 
 
 def run_evolution_study(config: StudyConfig, phase: StudyPhase, resume: bool) -> Path:
@@ -675,14 +676,22 @@ def run_evolution_study(config: StudyConfig, phase: StudyPhase, resume: bool) ->
             },
         )
         if phase != "final":
-            for name in config.search.policies:
-                strategy = STRATEGY_DEFINITIONS[name]
-                for seed in config.seeds:
-                    train_proposal_policy(
-                        replace(base, assisted=strategy.assisted),
-                        policy_configuration(config, (signature, seed, name)),
-                        root / "policies" / name / str(seed),
-                    )
+            from truss_research.evaluacion.reutilizacion_predictores import (
+                verify_reused_validation,
+            )
+            from truss_research.optimizacion.paralelismo_politicas import (
+                run_policy_campaign,
+            )
+
+            verify_reused_validation(config, selected)
+            run_policy_campaign(
+                config,
+                base,
+                (
+                    signature,
+                    "cuda" in str(read_run(paths[selected[0]]).get("device", "cpu")),
+                ),
+            )
             evaluate_campaign(config, base, ("validation", paths, selected))
         if campaign_identity(config, paths) != signature:
             raise ValueError(
@@ -714,6 +723,12 @@ def run_evolution_study(config: StudyConfig, phase: StudyPhase, resume: bool) ->
                 ),
                 "test_labels_used_for_training": False,
                 "models": frozen_models,
+                "policy_execution": artifact_signatures(root / "policy_execution"),
+                "predictor_import": source_digest(
+                    config.output_dir / "predictor_import.json"
+                )
+                if (config.output_dir / "predictor_import.json").exists()
+                else None,
             }
             freeze_path = config.output_dir / "freeze.json"
             if freeze_path.exists() and read_artifact(freeze_path) != freeze:

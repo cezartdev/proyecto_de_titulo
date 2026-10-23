@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup prepare plan smoke study final benchmark cpu-benchmark gpu-test report audit notebooks dev check test format tabpfn-weights tabpfn-pilot tabpfn-pilots run-all reset-study train load-test interpolation explain stop
+.PHONY: help setup prepare plan smoke study final benchmark cpu-benchmark gpu-test report audit notebooks dev check test format tabpfn-weights tabpfn-pilot tabpfn-pilots run-all reset-study train load-test interpolation explain stop import-predictors
 .NOTPARALLEL:
 
 RUN_MODE ?= full
@@ -11,6 +11,8 @@ SMOKE_CONFIG ?= config/smoke.json
 CPU_WORKERS ?=
 MAX_SECONDS ?=
 DRY_RUN ?=
+SOURCE_STUDY ?= artifacts/comparacion_tres_objetivos_final_001
+SOURCE_MANIFEST ?=
 STUDY_ARG = --estudio "$(ESTUDIO)"
 CPU_ARG = $(if $(strip $(CPU_WORKERS)),--cpu-workers "$(CPU_WORKERS)")
 UV_RUN = uv run --locked
@@ -47,6 +49,9 @@ interpolation:
 run-all:
 	uv run --no-project --python 3.13 python src/truss_research/evaluacion/recorrido.py --accelerator "$(ACCELERATOR)" --mode "$(RUN_MODE)" --estudio "$(ESTUDIO)" --config "$(STUDY_CONFIG)" $(CPU_ARG) $(if $(strip $(MAX_SECONDS)),--max-seconds "$(MAX_SECONDS)") $(if $(filter 1,$(INTERPOLATION)),--interpolation --interpolation-dest "$(INTERPOLATION_DEST)") $(if $(filter 1,$(DRY_RUN)),--plan)
 
+import-predictors:
+	$(UV_RUN) python -m truss_research importar-predictores --origen "$(SOURCE_STUDY)" --destino "$(ESTUDIO)" --source-manifest "$(if $(strip $(SOURCE_MANIFEST)),$(SOURCE_MANIFEST),$(error Definir SOURCE_MANIFEST con el inventario previo de codigo))" $(if $(filter 1,$(DRY_RUN)),--plan)
+
 reset-study:
 	$(UV_RUN) python -m truss_research.evaluacion.reinicio --estudio "$(ESTUDIO)" --config "$(STUDY_CONFIG)" $(if $(filter 1,$(DRY_RUN)),--dry-run)
 
@@ -58,6 +63,7 @@ help:
 	@echo "RUN_MODE=check usa una fuente sintetica y omite SHAP; MAX_SECONDS=600 limita el recorrido."
 	@echo "ACCELERATOR=cpu|cuda se aplica a TabPFN; RL y demas regresores permanecen en CPU."
 	@echo "CPU_WORKERS=12 limita procesos. ESTUDIO elige destino; no reutilizar versiones incompatibles."
+	@echo "import-predictors requiere SOURCE_STUDY, SOURCE_MANIFEST y ESTUDIO nuevo; DRY_RUN=1 solo verifica."
 	@echo "make explain EXPLAIN_MODE=pilot mide SHAP; EXPLAIN_DEST permite otro destino."
 	@echo "make interpolation INTERPOLATION_DEST=artifacts/interpolacion_001 es una sensibilidad separada."
 	@echo "make train MODEL=catboost DRY_RUN=1 muestra el ajuste individual; TRAIN_MODE=fit es diagnostico."

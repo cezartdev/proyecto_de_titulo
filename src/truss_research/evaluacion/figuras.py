@@ -7,6 +7,7 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from truss_research.cerchas.schemas import OUTPUT_COLUMNS
+from truss_research.evaluacion.lectura_resultados import PERCENT_SCALE, time_comparison
 
 TARGET_LABELS = {
     "mass_kg": "Masa (kg)",
@@ -117,4 +118,56 @@ def predictor_cost_figure(report: Path) -> Figure:
     )
     axis.legend(["Búsqueda final", "OOF anidadas", "Ajustes finales"], fontsize=8)
     figure.tight_layout()
+    return figure
+
+
+def predictor_inference_figure(report: Path) -> Figure:
+    """Compara latencias de prueba; el promedio entre semillas conserva las medianas."""
+    times = time_comparison(report).sort_values("individual_ms")
+    figure, axes = plt.subplots(1, 2, figsize=(13, 5))
+    for axis, column, title in zip(
+        axes,
+        ("individual_ms", "batch_per_design_ms"),
+        ("Consulta individual", "Por diseño dentro de un lote"),
+        strict=True,
+    ):
+        times[column].plot.barh(ax=axis, logx=True)
+        axis.set(
+            xlabel="Milisegundos · escala logarítmica", ylabel="Familia", title=title
+        )
+        axis.grid(axis="x", alpha=0.2)
+    figure.suptitle("Inferencia de prueba: media entre semillas de medianas medidas")
+    figure.tight_layout()
+    return figure
+
+
+def shap_comparison_figure(report: Path, seed: int) -> Figure:
+    """Normaliza importancia dentro de cada respuesta; no compara precisión."""
+    importance = pd.read_csv(report / "shap_global.csv")
+    importance = importance.loc[importance.seed.eq(seed)].copy()
+    total = importance.groupby(["model", "target"]).abs_shap.transform("sum")
+    importance["percentage"] = (
+        importance.abs_shap.div(total.where(total.gt(0))) * PERCENT_SCALE
+    )
+    figure, axes = plt.subplots(
+        1, len(OUTPUT_COLUMNS), figsize=(16, 6), layout="constrained"
+    )
+    for axis, target in zip(axes, OUTPUT_COLUMNS, strict=True):
+        table = (
+            importance.loc[importance.target.eq(target)]
+            .pivot(index="model", columns="variable", values="percentage")
+            .fillna(0)
+        )
+        image = axis.imshow(
+            table.to_numpy(), vmin=0, vmax=PERCENT_SCALE, cmap="Blues", aspect="auto"
+        )
+        axis.set_xticks(
+            range(len(table.columns)), table.columns, rotation=60, ha="right"
+        )
+        axis.set_yticks(range(len(table.index)), table.index)
+        axis.set_title(TARGET_LABELS[target])
+    figure.colorbar(image, ax=axes, label="Porcentaje de la media de |SHAP| del modelo")
+    figure.suptitle(
+        f"SHAP de validación · semilla {seed} · Dummy tiene contribuciones nulas"
+    )
     return figure

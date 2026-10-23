@@ -61,6 +61,127 @@ def test_atomic_artifact_preserves_previous_file_on_permanent_block(
     assert read_artifact(target)["value"] == 1
 
 
+def test_atomic_artifact_survives_block_longer_than_previous_retry_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from truss_research.datos import artefactos
+
+    original = Path.replace
+    delays: list[float] = []
+
+    def temporarily_blocked(path: Path, target: Path) -> Path:
+        if len(delays) < 8:
+            raise PermissionError("bloqueo prolongado simulado")
+        return original(path, target)
+
+    monkeypatch.setattr(Path, "replace", temporarily_blocked)
+    monkeypatch.setattr(artefactos, "sleep", delays.append)
+    target = tmp_path / "run.json"
+    write_json(target, {"value": 42})
+    assert read_artifact(target)["value"] == 42
+    assert len(delays) == 8 and sum(delays) > 0.62
+    assert max(delays) <= artefactos.REPLACE_MAX_RETRY_SECONDS
+
+
+def test_digest_session_reads_once_and_invalidates_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    from truss_research.datos import preparacion
+
+    target = tmp_path / "artifact.bin"
+    target.write_bytes(b"original")
+    original = hashlib.file_digest
+    calls: list[str] = []
+
+    def measured(stream, algorithm):
+        calls.append(algorithm)
+        return original(stream, algorithm)
+
+    monkeypatch.setattr(hashlib, "file_digest", measured)
+    with preparacion.digest_session():
+        first = preparacion.source_digest(target)
+        assert preparacion.source_digest(target) == first
+        assert len(calls) == 1
+        target.write_bytes(b"modified artifact")
+        assert preparacion.source_digest(target) != first
+        assert len(calls) == 2
+    with preparacion.digest_session():
+        preparacion.source_digest(target)
+    assert len(calls) == 3
+
+
+def test_digest_rejects_file_changed_during_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    from truss_research.datos import preparacion
+
+    target = tmp_path / "artifact.bin"
+    target.write_bytes(b"original")
+    original = hashlib.file_digest
+
+    def changed(stream, algorithm):
+        digest = original(stream, algorithm)
+        target.write_bytes(b"changed during verification")
+        return digest
+
+    monkeypatch.setattr(hashlib, "file_digest", changed)
+    with preparacion.digest_session(), pytest.raises(ValueError, match="durante"):
+        preparacion.source_digest(target)
+
+
+def test_operational_revision_preserves_identity_and_rejects_other_sources(
+    prepared_temporal: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from truss_research.datos.preparacion import source_digest
+    from truss_research.evaluacion.busqueda_evolutiva import campaign_identity
+    from truss_research.optimizacion import estudio_estado as state
+
+    config = state.StudyConfig(tmp_path / "study", data_dir=prepared_temporal)
+    config.output_dir.mkdir()
+    monkeypatch.setattr(state, "source_signature", lambda: "previous")
+    state.open_session(config, False)
+    identity = campaign_identity(config, {})
+    monkeypatch.setattr(state, "source_signature", lambda: "io_revision")
+    with pytest.raises(ValueError, match="código"):
+        state.open_session(config, True)
+    receipt = config.output_dir / "maintenance/compatibility.json"
+    receipt.parent.mkdir()
+    write_json(
+        receipt,
+        {
+            "scope": "io_only",
+            "previous_source_signature": "previous",
+            "current_source_signature": "io_revision",
+        },
+    )
+    saved = state.read_study(config.output_dir)
+    saved["source_compatibility"] = {
+        "file": "maintenance/compatibility.json",
+        "signature": source_digest(receipt),
+    }
+    write_json(config.output_dir / "study.json", saved)
+    session = state.open_session(config, True)
+    session.save()
+    assert session.source_signature == "previous"
+    assert state.study_source_signature(config.output_dir) == "previous"
+    assert campaign_identity(config, {}) == identity
+    assert (
+        state.read_study(config.output_dir)["source_compatibility"]
+        == saved["source_compatibility"]
+    )
+    monkeypatch.setattr(state, "source_signature", lambda: "unreviewed_science_change")
+    with pytest.raises(ValueError, match="revisión operativa"):
+        state.open_session(config, True)
+    monkeypatch.setattr(state, "source_signature", lambda: "io_revision")
+    receipt.write_text("{}")
+    with pytest.raises(ValueError, match="evidencia"):
+        state.open_session(config, True)
+
+
 def test_plan_without_data_or_training(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

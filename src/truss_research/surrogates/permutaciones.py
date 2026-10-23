@@ -22,8 +22,35 @@ from truss_research.surrogates.persistencia import model_signatures
 if TYPE_CHECKING:
     from truss_research.surrogates.explicabilidad import ExplanationConfig
 
-CHECKPOINT_VERSION = 2
+CHECKPOINT_VERSION = 3
 logger = logging.getLogger(__name__)
+
+
+def contains_tabpfn(model: Pipeline) -> bool:
+    from truss_research.surrogates.especializacion import TargetwiseRegressor
+    from truss_research.surrogates.tabpfn import TabPFNRegressor
+
+    regressor = model.named_steps["regressor"]
+    if isinstance(regressor, TargetwiseRegressor):
+        return any(contains_tabpfn(component) for _, component in regressor.components_)
+    return isinstance(regressor, TabPFNRegressor)
+
+
+def explanation_predictions(
+    model: Pipeline, features: pd.DataFrame, batch_size: int
+) -> FloatArray:
+    """Fija el tamaño de inferencia TabPFN para comparar máscaras y reconstrucción."""
+    if not contains_tabpfn(model):
+        return np.asarray(model.predict(features)).reshape(len(features), -1)
+    predictions: list[FloatArray] = []
+    for start in range(0, len(features), batch_size):
+        batch = features.iloc[start : start + batch_size]
+        padded = pd.concat(
+            [batch, batch.iloc[[-1] * (batch_size - len(batch))]], ignore_index=True
+        )
+        values = np.asarray(model.predict(padded)).reshape(batch_size, -1)
+        predictions.append(values[: len(batch)])
+    return np.concatenate(predictions)
 
 
 def package_version(name: str) -> str:
@@ -65,7 +92,9 @@ def resumable_permutations(
     def predict_array(array: FloatArray) -> FloatArray:
         counts["prediction_calls"] += 1
         counts["prediction_rows"] += len(array)
-        values = np.asarray(model.predict(pd.DataFrame(array, columns=INPUT_COLUMNS)))
+        values = explanation_predictions(
+            model, pd.DataFrame(array, columns=INPUT_COLUMNS), config.batch_size
+        )
         values = values.reshape(len(array), output_count)
         if not np.isfinite(values).all():
             raise ValueError("El predictor SHAP devolvió valores no finitos")

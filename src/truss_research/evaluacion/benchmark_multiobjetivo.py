@@ -20,6 +20,7 @@ from truss_research.optimizacion.estudio_estado import (
     StudyConfig,
     artifact_signatures,
     source_signature,
+    study_source_signature,
 )
 from truss_research.surrogates.configuracion import FloatArray, response_scale
 from truss_research.surrogates.experimentos import write_json
@@ -224,12 +225,17 @@ def write_benchmark(
 ) -> pd.DataFrame:
     """Guarda evidencia observada y contratos; no ajusta ningún modelo."""
     training, predictions = context
+    source = (
+        study_source_signature(config.output_dir)
+        if (config.output_dir / "study.json").is_file()
+        else source_signature()
+    )
     identity = hashlib.sha256(
         (
             training.to_csv(index=False)
             + predictions.to_csv(index=False)
             + json.dumps(asdict(config), sort_keys=True, default=str)
-            + source_signature()
+            + source
         ).encode()
     ).hexdigest()
     if (destination / "complete.json").is_file():

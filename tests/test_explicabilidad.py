@@ -140,6 +140,40 @@ def test_plan_has_no_side_effects_and_pilot_is_common(
     assert artifact_signatures(shap_study) == before
 
 
+def test_relative_and_absolute_paths_share_shap_identity_and_resume(
+    shap_study: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from truss_research.datos.artefactos import read_artifact
+
+    absolute = replace(
+        request_for(shap_study, tmp_path / "normalized"),
+        config=stage.DEFAULT_CONFIG.resolve(),
+    )
+    monkeypatch.chdir(tmp_path)
+    relative = replace(
+        absolute,
+        study=Path(os.path.relpath(shap_study, tmp_path)),
+        destination=Path("normalized"),
+    )
+    absolute_plan = stage.explanation_plan(absolute)
+    relative_plan = stage.explanation_plan(relative)
+    assert absolute_plan == relative_plan
+    identity = stage.plan_identity(absolute_plan)
+    assert identity == stage.plan_identity(relative_plan)
+    write_json(tmp_path / "request.json", {"plan": absolute_plan})
+    restored = read_artifact(tmp_path / "request.json")["plan"]
+    assert identity == stage.plan_identity(restored)
+    destination = stage.run_explanations(absolute)
+    monkeypatch.setattr(
+        stage,
+        "execute_explanation",
+        lambda raw: pytest.fail("No debe recalcular al cambiar solo la ruta"),
+    )
+    assert stage.run_explanations(relative) == destination
+
+
 def test_pilot_resumes_without_changing_models_and_measures_work(
     shap_study: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -228,6 +262,60 @@ def test_full_export_includes_shap_but_excludes_pilot(
     ).read_bytes()
     assert (report / "shap_provenance.json").is_file()
     assert pd.read_csv(report / "shap_costs.csv").evaluation_designs.eq(10).all()
+
+
+@pytest.mark.parametrize("composite", [False, True])
+def test_tabpfn_shap_uses_fixed_batches_for_masks_and_reconstruction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, composite: bool
+) -> None:
+    from truss_research.surrogates.permutaciones import explanation_predictions
+    from truss_research.surrogates.tabpfn import TabPFNParameters, TabPFNRegressor
+
+    calls: list[int] = []
+
+    def batch_sensitive(self: TabPFNRegressor, features: pd.DataFrame) -> np.ndarray:
+        calls.append(len(features))
+        return features.sum(axis=1).to_numpy() + len(features) % 3
+
+    monkeypatch.setattr(TabPFNRegressor, "predict", batch_sensitive)
+    regressor = TabPFNRegressor(TabPFNParameters(), target=0)
+    regressor.estimators_ = []
+    model = Pipeline([("regressor", regressor)])
+    if composite:
+        targetwise = TargetwiseRegressor(PredictorConfig(model="targetwise"))
+        targetwise.components_ = [
+            (PredictorConfig(model="tabpfn", target_index=index), model)
+            for index in range(len(OUTPUT_COLUMNS))
+        ]
+        model = Pipeline([("regressor", targetwise)])
+    background = pd.DataFrame(
+        np.arange(21, dtype=float).reshape(3, 7), columns=INPUT_COLUMNS
+    )
+    held = background.iloc[:2] + 0.5
+    config = ExplanationConfig(
+        tmp_path,
+        tmp_path,
+        tmp_path / "fixed_batches",
+        permutation_rounds=1,
+        batch_size=8,
+        target_index=None if composite else 0,
+    )
+    predicted = explanation_predictions(model, held, config.batch_size)
+    single = explanation_predictions(model, held.iloc[:1], config.batch_size)
+    np.testing.assert_array_equal(single, predicted[:1])
+    result = compute_attributions(
+        AttributionJob(
+            model,
+            (background, held),
+            config,
+            "targetwise" if composite else "tabpfn",
+            predicted,
+        )
+    )
+    np.testing.assert_allclose(
+        result.bases + result.values.sum(axis=1), predicted, rtol=0, atol=1e-10
+    )
+    assert calls and set(calls) == {config.batch_size}
 
 
 @pytest.mark.parametrize("middle", ["ridge", "svr"])

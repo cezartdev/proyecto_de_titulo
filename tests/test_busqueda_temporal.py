@@ -286,6 +286,67 @@ def test_small_ridge_temporal_oof_and_parallel_preparation(
     ).is_file()
 
 
+@pytest.mark.parametrize("persistent", [False, True])
+def test_final_predictor_publication_preserves_results_when_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, persistent: bool
+) -> None:
+    from truss_research.datos import artefactos
+    from truss_research.evaluacion import busqueda_evolutiva
+    from truss_research.optimizacion import estudio_cierre
+    from truss_research.optimizacion.estudio_estado import (
+        StudyConfig,
+        TaskRecord,
+        artifact_signatures,
+    )
+
+    source = tmp_path / "predictor"
+    source.mkdir()
+    (source / "model.bin").write_bytes(b"modelo sintetico congelado")
+    record = TaskRecord(
+        "predictor/gpr/46",
+        status="complete",
+        directory=str(source),
+        signatures=artifact_signatures(source),
+    )
+    reference = busqueda_evolutiva.PredictorReference("gpr", 46, record)
+    monkeypatch.setattr(
+        busqueda_evolutiva, "predictor_records", lambda path: (reference,)
+    )
+    evaluations: list[Path] = []
+
+    def evaluate(directory: Path, destination: Path) -> None:
+        assert directory == source
+        evaluations.append(destination)
+        destination.mkdir()
+        (destination / "metrics.csv").write_text("mae\n0.1\n", encoding="utf-8")
+
+    monkeypatch.setattr(estudio_cierre, "evaluate_test_predictor", evaluate)
+    original = Path.replace
+    blocks: list[Path] = []
+
+    def blocked(path: Path, target: Path) -> Path:
+        if path.is_dir() and (persistent or len(blocks) < 2):
+            blocks.append(path)
+            raise PermissionError("publicacion bloqueada simulada")
+        return original(path, target)
+
+    monkeypatch.setattr(Path, "replace", blocked)
+    monkeypatch.setattr(artefactos, "sleep", lambda seconds: None)
+    settings = StudyConfig(tmp_path / "study")
+    if persistent:
+        with pytest.raises(PermissionError, match="bloqueada"):
+            busqueda_evolutiva.close_predictors(settings)
+        busqueda_evolutiva.verify_evaluation(evaluations[0])
+        assert len(blocks) == artefactos.REPLACE_ATTEMPTS
+        return
+    busqueda_evolutiva.close_predictors(settings)
+    destination = settings.output_dir / "evolution/test_predictors/gpr_46"
+    busqueda_evolutiva.verify_evaluation(destination)
+    busqueda_evolutiva.close_predictors(settings)
+    assert len(evaluations) == 1 and len(blocks) == 2
+    assert not evaluations[0].exists()
+
+
 def test_predictive_report_from_small_signed_models(
     prepared_temporal: Path, tmp_path: Path
 ) -> None:
@@ -474,6 +535,7 @@ def test_development_freeze_and_exports_with_synthetic_worlds(
             {
                 "schema_version": STUDY_SCHEMA_VERSION,
                 "config": asdict(settings),
+                "source_signature": campaign.source_signature(),
                 "tasks": [],
             },
         )
@@ -508,6 +570,22 @@ def test_development_freeze_and_exports_with_synthetic_worlds(
     )
     monkeypatch.setattr(campaign, "load_predictor", lambda path: FormulaPredictor())
     monkeypatch.setattr(campaign, "family_models", lambda *args: (FormulaPredictor(),))
+
+    def synthetic_policies(
+        settings: StudyConfig, base: SearchContext, identity: tuple[str, bool]
+    ) -> None:
+        from truss_research.optimizacion.entrenamiento_propuestas import (
+            train_proposal_policy,
+        )
+        from truss_research.optimizacion.paralelismo_politicas import policy_jobs
+
+        for job in policy_jobs(settings, base, identity[0]).values():
+            train_proposal_policy(job.context, job.config, job.resources.destination)
+
+    monkeypatch.setattr(
+        "truss_research.optimizacion.paralelismo_politicas.run_policy_campaign",
+        synthetic_policies,
+    )
 
     def fake_utility(settings: StudyConfig, split_name: str) -> pd.DataFrame:
         from truss_research.optimizacion.estudio_estado import artifact_signatures

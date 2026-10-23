@@ -240,6 +240,8 @@ class StudySession:
     test_started: bool = False
     preparation_tasks: dict[str, TaskRecord] = field(default_factory=dict)
     execution_runs: list[dict[str, JsonValue]] = field(default_factory=list)
+    predictor_import_signature: str | None = None
+    source_compatibility: dict[str, JsonValue] | None = None
     executor: CpuPool | None = field(default=None, repr=False)
     gpu_executor: CpuPool | None = field(default=None, repr=False)
     telemetry: CampaignMonitor | None = field(default=None, repr=False)
@@ -259,6 +261,8 @@ class StudySession:
                     asdict(task) for task in self.preparation_tasks.values()
                 ],
                 "execution_runs": self.execution_runs,
+                "predictor_import_signature": self.predictor_import_signature,
+                "source_compatibility": self.source_compatibility,
             },
         )
 
@@ -281,6 +285,31 @@ def source_signature() -> str:
         for path in paths
     }
     return hashlib.sha256(json.dumps(signatures, sort_keys=True).encode()).hexdigest()
+
+
+def study_source_signature(directory: Path) -> str:
+    """Acepta únicamente una revisión operativa inventariada para este estudio."""
+    current = source_signature()
+    saved = read_study(directory)
+    original = str(saved["source_signature"])
+    if original == current:
+        return original
+    reference = saved.get("source_compatibility")
+    if not isinstance(reference, dict):
+        raise ValueError("Cambió el código del estudio; elegir un destino nuevo")
+    receipt = (directory / str(reference["file"])).resolve()
+    if not receipt.is_relative_to(directory.resolve()):
+        raise ValueError("La revisión operativa debe estar dentro del estudio")
+    if source_digest(receipt) != reference["signature"]:
+        raise ValueError("Cambió la evidencia de compatibilidad del código")
+    evidence = read_artifact(receipt)
+    if (
+        evidence.get("previous_source_signature") != original
+        or evidence.get("current_source_signature") != current
+        or evidence.get("scope") != "io_only"
+    ):
+        raise ValueError("El código no corresponde a la revisión operativa aprobada")
+    return original
 
 
 def environment_versions() -> dict[str, str]:
@@ -374,7 +403,7 @@ def open_session(config: StudyConfig, resume: bool) -> StudySession:
     ):
         raise ValueError("Cambió la configuración, datos, código o entorno del estudio")
     if saved.get("source_signature") != session.source_signature:
-        raise ValueError("Cambió el código del estudio; elegir un destino nuevo")
+        session.source_signature = study_source_signature(config.output_dir)
     session.test_started = saved.get("test_started") is True
     records = cast(list[dict[str, JsonValue]], saved.get("tasks", []))
     session.tasks = {str(record["key"]): TaskRecord(**record) for record in records}
@@ -385,6 +414,8 @@ def open_session(config: StudyConfig, resume: bool) -> StudySession:
     session.execution_runs = cast(
         list[dict[str, JsonValue]], saved.get("execution_runs", [])
     )
+    session.predictor_import_signature = saved.get("predictor_import_signature")
+    session.source_compatibility = saved.get("source_compatibility")
     return session
 
 

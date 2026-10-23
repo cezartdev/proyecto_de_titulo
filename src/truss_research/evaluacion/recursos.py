@@ -194,7 +194,13 @@ class ResourceLedger:
 
     def checkpoint(self) -> None:
         if perf_counter() - self.last_save >= CHECKPOINT_SECONDS:
-            self.save()
+            try:
+                self.save()
+            except PermissionError:
+                logging.getLogger(__name__).warning(
+                    "Medición temporalmente bloqueada: %s; se reintentará", self.path
+                )
+                self.last_save = perf_counter()
 
     @contextmanager
     def phase(self, name: str) -> Iterator[None]:

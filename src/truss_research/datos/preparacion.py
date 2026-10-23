@@ -3,6 +3,9 @@
 import hashlib
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict
 from pathlib import Path
 from zipfile import BadZipFile
@@ -57,10 +60,41 @@ from truss_research.datos.validacion import (
 
 logger = logging.getLogger(__name__)
 
+type DigestFingerprint = tuple[int, int, int, int, int]
+DIGEST_CACHE: ContextVar[dict[Path, tuple[DigestFingerprint, str]] | None] = ContextVar(
+    "artifact_digest_cache", default=None
+)
+
+
+@contextmanager
+def digest_session() -> Iterator[None]:
+    """Comparte lecturas SHA dentro de una ejecución, invalidando archivos modificados."""
+    token = DIGEST_CACHE.set({})
+    try:
+        yield
+    finally:
+        DIGEST_CACHE.reset(token)
+
+
+def digest_fingerprint(source: Path) -> DigestFingerprint:
+    stat = source.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
 
 def source_digest(source: Path) -> str:
+    source = source.resolve()
+    cache = DIGEST_CACHE.get()
+    fingerprint = digest_fingerprint(source)
+    previous = cache.get(source) if cache is not None else None
+    if previous is not None and previous[0] == fingerprint:
+        return previous[1]
     with source.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    if digest_fingerprint(source) != fingerprint:
+        raise ValueError(f"El archivo cambió durante su verificación: {source}")
+    if cache is not None:
+        cache[source] = (fingerprint, digest)
+    return digest
 
 
 def prepare_dataset(config: PreparationConfig) -> PreparationResult:

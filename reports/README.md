@@ -19,6 +19,10 @@ Los modelos y decisiones quedan en `artifacts/<estudio>/`; las exportaciones, en
 
 `convergence_diagnostics.csv` conserva diagnósticos numéricos. `technical_closure.json` distingue cierre científico y `resources_complete`: recursos parciales deben declararse y no convertirse en mediciones completas.
 
+Las políticas paralelas añaden `policy_execution.csv` y `policy_execution.json` para invocaciones, concurrencia, intentos y recuperación por memoria. `policy_resources.csv` registra las fases medidas de cada intento y su cobertura. El tiempo transcurrido del coordinador incluye arranque y cierre de procesos; no es la suma de tiempos de trabajadores. Estas tablas y `policy_costs.csv` son vistas complementarias del mismo trabajo, no costos aditivos. La telemetría original se conserva bajo `evolution/policy_execution/` y queda firmada en el cierre.
+
+Cuando se reutilizan predictores, `predictor_import.json` identifica el origen histórico, las firmas conservadas y las copias locales verificadas. Sus costos predictivos corresponden al entrenamiento original, no a nuevos ajustes. `discarded_policy_costs.csv` conserva el intento secuencial excluido del nuevo entrenamiento de políticas; al proceder de checkpoints, sus tiempos son límites inferiores. La evidencia y las tablas originales se archivan localmente bajo `predictor_origin/`: las exportaciones no leen el estudio de origen ni requieren conservarlo disponible. `resources_complete` mantiene su alcance predictivo; la cobertura de políticas se consulta en `policy_resources.csv`.
+
 ## Presentación y SHAP
 
 `report`, `benchmark` y `audit` comprueban el mismo cierre y crean exportaciones numeradas. `audit` guarda verificaciones de integridad y recursos sin duplicar las tablas de comparación. No son campañas nuevas ni auditorías externas independientes. `notebooks` añade los cuatro notebooks ejecutados, cuatro HTML, PNG/SVG y el índice `figures.csv`, a partir de las [fuentes canónicas](../notebooks/README.md).

@@ -48,6 +48,28 @@ def resolve_study(directory: Path | None = None) -> Path:
     return selected.resolve()
 
 
+def resolve_notebook_study() -> Path:
+    """Respeta la selección explícita y reconoce un único cierre disponible."""
+    if "TRUSS_STUDY" in os.environ:
+        return resolve_study(Path(os.environ["TRUSS_STUDY"]))
+    default = NOTEBOOK_DIRECTORY.parent / DEFAULT_STUDY
+    if (default / "study.json").is_file():
+        return resolve_study(default)
+    candidates = sorted(
+        path.parent
+        for path in default.parent.glob("*/study.json")
+        if (path.parent / "evolution/closed.json").is_file()
+        and read_artifact(path.parent / "evolution/closed.json").get("phase")
+        == "complete"
+    )
+    if len(candidates) != 1:
+        raise ValueError(
+            "No hay un único estudio cerrado disponible; definir TRUSS_STUDY "
+            f"con el estudio que se desea presentar. Candidatos: {candidates}"
+        )
+    return resolve_study(candidates[0])
+
+
 def verify_presentation_report(study: Path, report: Path) -> None:
     """Comprueba procedencia y salidas declaradas antes de presentarlas."""
     provenance = read_artifact(report / "provenance.json")
@@ -80,13 +102,7 @@ def notebook_context() -> NotebookContext:
     from truss_research.evaluacion.registro import results_root
     from truss_research.optimizacion.estudio_estado import load_study_config
 
-    study = resolve_study(
-        Path(
-            os.environ.get(
-                "TRUSS_STUDY", str(NOTEBOOK_DIRECTORY.parent / DEFAULT_STUDY)
-            )
-        )
-    )
+    study = resolve_notebook_study()
     config = load_study_config(study)
     if config.experiment != "evolution":
         raise ValueError(

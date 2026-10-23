@@ -310,6 +310,19 @@ def run_jupyter_command(args: argparse.Namespace) -> None:
         raise RuntimeError("JupyterLab terminó con un error")
 
 
+def run_predictor_import(args: argparse.Namespace) -> None:
+    from truss_research.evaluacion.reutilizacion_predictores import (
+        PredictorImport,
+        import_predictors,
+    )
+
+    print(
+        import_predictors(
+            PredictorImport(args.origen, args.destino, args.source_manifest), args.plan
+        )
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Experimentos de predicción y selección de cerchas. Usar make para el recorrido habitual."
@@ -359,6 +372,15 @@ def main() -> int:
     study.add_argument("--reanudar", action="store_true")
     study.add_argument("--plan", action="store_true")
     study.set_defaults(handler=run_study_command)
+    reuse = commands.add_parser(
+        "importar-predictores",
+        help="Reutilizar predictores verificados en un destino nuevo",
+    )
+    reuse.add_argument("--origen", type=Path, required=True)
+    reuse.add_argument("--destino", type=Path, required=True)
+    reuse.add_argument("--source-manifest", type=Path, required=True)
+    reuse.add_argument("--plan", action="store_true")
+    reuse.set_defaults(handler=run_predictor_import)
     final = commands.add_parser(
         "evaluar-final",
         help="Congelar decisiones y evaluar prueba; requiere validación completa",
@@ -425,6 +447,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     os.environ.update(dict.fromkeys(THREAD_VARIABLES, "1"))
     try:
+        from truss_research.datos.preparacion import digest_session
         from truss_research.evaluacion.registro import execution_log, next_log
 
         if getattr(args, "plan", False):
@@ -438,8 +461,11 @@ def main() -> int:
             else Path("reports") / label
         )
         log = next_log(root / "logs", args.command)
-        with execution_log(
-            log, args.command, {"arguments": sys.argv[1:], "cwd": str(Path.cwd())}
+        with (
+            digest_session(),
+            execution_log(
+                log, args.command, {"arguments": sys.argv[1:], "cwd": str(Path.cwd())}
+            ),
         ):
             args.handler(args)
     except (ValueError, OSError, RuntimeError, ImportError) as error:

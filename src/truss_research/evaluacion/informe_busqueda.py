@@ -38,6 +38,15 @@ def verify_closed_search(study: Path) -> None:
         raise ValueError("Completar make final antes de exportar el cierre")
     if freeze["policies"] != artifact_signatures(root / "policies"):
         raise ValueError("Las políticas difieren del cierre congelado")
+    if freeze.get("policy_execution", {}) != artifact_signatures(
+        root / "policy_execution"
+    ):
+        raise ValueError("Cambió la ejecución de políticas congelada")
+    if (
+        freeze.get("predictor_import")
+        and source_digest(study / "predictor_import.json") != freeze["predictor_import"]
+    ):
+        raise ValueError("Cambió la procedencia predictiva congelada")
     if freeze["validation"] != artifact_signatures(root / "validation"):
         raise ValueError("Cambió la validación congelada")
     for model in freeze["models"].values():
@@ -64,6 +73,7 @@ def export_search(study: Path, destination: Path, kind: str) -> Path:
     destination.mkdir(parents=True)
     config = load_study_config(study)
     root = study / SEARCH_DIRECTORY
+    export_policy_resources(study, destination)
     if kind == "auditoria":
         return export_integrity(study, destination)
     summaries = pd.concat(
@@ -416,6 +426,64 @@ def export_search_details(
     pd.concat(fronts, ignore_index=True).to_csv(
         destination / "search_fronts.csv", index=False
     )
+
+
+def export_policy_resources(study: Path, destination: Path) -> None:
+    """Separa duración del bloque, costos por intento y procedencia reutilizada."""
+    path = study / "evolution/policy_execution/manifest.json"
+    if path.exists():
+        state = read_artifact(path)
+        pd.DataFrame(state["runs"]).to_csv(
+            destination / "policy_execution.csv", index=False
+        )
+        rows = []
+        for key, record in state["jobs"].items():
+            for number, attempt in enumerate(record["attempts"], start=1):
+                file = Path(attempt["measurement_files"][0])
+                if file.is_file():
+                    if source_digest(file) != attempt.get(
+                        "measurement_signatures", {}
+                    ).get(str(file)):
+                        raise ValueError("Cambió una medición de políticas")
+                    for phase in read_artifact(file)["phases"]:
+                        rows.append(
+                            {
+                                "policy": key,
+                                "attempt": number,
+                                "attempt_status": attempt["status"],
+                                **phase,
+                                "coverage": "complete"
+                                if phase["finished"]
+                                and not phase.get("errors")
+                                and phase["cpu_coverage"] == "complete"
+                                else "incomplete",
+                            }
+                        )
+                else:
+                    rows.append(
+                        {
+                            "policy": key,
+                            "attempt": number,
+                            "attempt_status": attempt["status"],
+                            "coverage": "missing",
+                        }
+                    )
+        pd.DataFrame(rows).to_csv(destination / "policy_resources.csv", index=False)
+        write_json(destination / "policy_execution.json", state)
+    marker = study / "predictor_import.json"
+    if marker.exists():
+        receipt = read_artifact(marker)
+        write_json(destination / "predictor_import.json", receipt)
+        pd.DataFrame(
+            receipt["discarded_policies"],
+            columns=[
+                "policy",
+                "scope",
+                "completed_steps",
+                "wall_seconds",
+                "cpu_seconds",
+            ],
+        ).to_csv(destination / "discarded_policy_costs.csv", index=False)
 
 
 def write_export_provenance(study: Path, destination: Path, kind: str) -> None:

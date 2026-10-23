@@ -275,6 +275,15 @@ def run_study(
         from truss_research.evaluacion.busqueda_evolutiva import run_evolution_study
 
         return run_evolution_study(config, phase, resume)
+    if (config.output_dir / "predictor_import.json").exists():
+        from truss_research.evaluacion.reutilizacion_predictores import (
+            verify_imported_predictors,
+        )
+
+        with study_lock(config.output_dir):
+            open_session(config, True)
+            verify_imported_predictors(config)
+        return config.output_dir
     config.execution.validate_campaign()
     validate_training_protocol(config)
     config = replace(

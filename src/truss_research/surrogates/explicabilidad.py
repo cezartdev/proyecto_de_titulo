@@ -17,7 +17,6 @@ from truss_research.surrogates.configuracion import SCHEMA_VERSION, FloatArray
 from truss_research.surrogates.experimentos import (
     data_signature,
     load_predictor,
-    predict,
     read_run,
     warning_records,
     write_json,
@@ -106,7 +105,10 @@ def checked_attributions(
         atol=ADDITIVITY_TOLERANCE,
     ):
         raise ValueError(
-            "Las contribuciones SHAP no reconstruyen las predicciones en unidades originales"
+            "Las contribuciones SHAP no reconstruyen las predicciones en unidades "
+            f"originales; familia={job.family}, respuesta={job.config.target_index}, "
+            "error máximo por respuesta="
+            f"{np.max(np.abs(result.bases + result.values.sum(axis=1) - job.predicted), axis=0).tolist()}"
         )
     return result
 
@@ -185,6 +187,8 @@ def forest_attributions(job: AttributionJob) -> AttributionResult:
 
 
 def composite_attributions(job: AttributionJob) -> AttributionResult:
+    from truss_research.surrogates.permutaciones import explanation_predictions
+
     results: list[AttributionResult] = []
     components: list[dict[str, JsonValue]] = []
     regressor = job.model.named_steps["regressor"]
@@ -197,7 +201,7 @@ def composite_attributions(job: AttributionJob) -> AttributionResult:
             ),
             target_index=index,
         )
-        predicted = np.asarray(model.predict(job.data[1])).reshape(len(job.data[1]), 1)
+        predicted = explanation_predictions(model, job.data[1], config.batch_size)
         result = checked_attributions(
             AttributionJob(model, job.data, config, settings.model, predicted),
             compute_attributions(
@@ -295,6 +299,8 @@ def validate_contributions(
 def explain_values(config: ExplanationConfig) -> pd.DataFrame:
     from time import perf_counter
 
+    from truss_research.surrogates.permutaciones import explanation_predictions
+
     started = perf_counter()
     if config.output_dir.exists():
         raise ValueError("El destino ya existe; elegir una ejecución nueva")
@@ -317,7 +323,7 @@ def explain_values(config: ExplanationConfig) -> pd.DataFrame:
     background = training.sample(
         min(config.background_size, len(training)), random_state=config.seed
     )
-    predicted = predict(model, evaluation).to_numpy()
+    predicted = explanation_predictions(model, evaluation, config.batch_size)
     configuration = metadata["config"]
     result = compute_attributions(
         AttributionJob(
@@ -370,7 +376,7 @@ def explain_values(config: ExplanationConfig) -> pd.DataFrame:
             "counted_prediction_calls": result.prediction_calls,
             "counted_prediction_rows": result.prediction_rows,
             "permutation_completed_seconds": result.permutation_seconds,
-            "prediction_count_scope": "pipeline calls; includes reconstruction checks; checkpoints count completed designs, interrupted uncommitted work excluded",
+            "prediction_count_scope": "logical prediction calls and requested rows before fixed-batch padding; includes reconstruction checks; checkpoints count completed designs, interrupted uncommitted work excluded",
             "final_additivity_error_by_target": np.max(
                 np.abs(bases + values.sum(axis=1) - predicted), axis=0
             ).tolist(),
@@ -387,6 +393,7 @@ def explain_values(config: ExplanationConfig) -> pd.DataFrame:
             "full_validation_designs": len(split.validation),
             "full_training_designs": len(split.training),
             "batch_size": config.batch_size,
+            "prediction_batch_policy": "TabPFN uses fixed batches padded with the last row; padding predictions are discarded; other families keep their original inference",
             "seed": config.seed,
             "permutation_rounds": config.permutation_rounds,
             "explanation_seconds": perf_counter() - started,

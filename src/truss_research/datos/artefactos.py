@@ -17,8 +17,9 @@ from truss_research.datos.schemas import (
 )
 
 PATH_FORMAT = "relative-v1"
-REPLACE_ATTEMPTS = 6
-REPLACE_RETRY_SECONDS = 0.02
+REPLACE_ATTEMPTS = 18
+REPLACE_RETRY_SECONDS = 0.05
+REPLACE_MAX_RETRY_SECONDS = 2.0
 logger = logging.getLogger(__name__)
 
 
@@ -36,7 +37,7 @@ def replace_artifact(temporary: Path, destination: Path) -> None:
                 destination,
                 attempt + 1,
             )
-            sleep(REPLACE_RETRY_SECONDS * 2**attempt)
+            sleep(min(REPLACE_MAX_RETRY_SECONDS, REPLACE_RETRY_SECONDS * 2**attempt))
 
 
 PATH_KEYS = frozenset(

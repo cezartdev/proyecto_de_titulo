@@ -8,10 +8,32 @@ import pytest
 from truss_research.cerchas.schemas import OUTPUT_COLUMNS
 from truss_research.evaluacion.lectura_resultados import (
     interval_reading,
+    physical_scope_table,
     predictor_interpretation,
     shap_interpretation,
     time_comparison,
 )
+
+
+def test_physical_scope_uses_academic_labels_without_changing_provenance(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "physical_provenance.csv"
+    pd.DataFrame(
+        {
+            "element": ["Material", "Origen", "Solver"],
+            "status": ["Confirmado", "Informado por el autor", "Pendiente"],
+            "confirmation_source": ["Profesora", "Conversación", ""],
+            "confirmation_required": ["", "", "Consultar a la profesora"],
+        }
+    ).to_csv(path, index=False)
+    original = path.read_bytes()
+    table = physical_scope_table(tmp_path)
+    assert list(table.columns) == ["Aspecto del caso", "Alcance documental"]
+    text = table.to_string(index=False)
+    assert "profesora" not in text.lower() and "autor" not in text.lower()
+    assert "Información no disponible" in text
+    assert path.read_bytes() == original
 
 
 def test_time_comparison_separates_shared_work_and_per_design_latencies(

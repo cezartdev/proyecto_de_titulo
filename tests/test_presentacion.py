@@ -186,6 +186,9 @@ def presentation(tmp_path: Path) -> tuple[Path, Path]:
         study / "evolution/test/paired_intervals.csv", index=False
     )
     pd.DataFrame(
+        {"element": ["Configuración del solver"], "status": ["Pendiente"]}
+    ).to_csv(report / "physical_provenance.csv", index=False)
+    pd.DataFrame(
         [
             {
                 "split": split,

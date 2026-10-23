@@ -8,6 +8,21 @@ SECONDS_PER_MINUTE = 60
 MILLISECONDS_PER_SECOND = 1000
 PERCENT_SCALE = 100
 FIT_PHASES = ("tuning_seconds", "crossfit_seconds", "fit_seconds")
+PHYSICAL_STATUS_LABELS = {
+    "Confirmado": "Registrado en la documentación del caso",
+    "Informado por el autor": "Antecedente descriptivo del caso",
+    "Pendiente": "Información no disponible en esta campaña",
+}
+
+
+def physical_scope_table(report: Path) -> pd.DataFrame:
+    """Presenta el alcance técnico sin incorporar referencias personales al relato."""
+    provenance = pd.read_csv(report / "physical_provenance.csv")
+    return (
+        provenance[["element", "status"]]
+        .replace({"status": PHYSICAL_STATUS_LABELS})
+        .rename(columns={"element": "Aspecto del caso", "status": "Alcance documental"})
+    )
 
 
 def best_families(

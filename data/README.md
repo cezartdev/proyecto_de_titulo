@@ -20,7 +20,7 @@ La fuente autorizada corresponde al libro `data/raw/240214-C1-20m.xlsx`, hoja **
 ### Identificadores y dinámica evolutiva de generación
 - **Estructura `{generación;solución}`:** Los 5.000 registros corresponden a **100 generaciones sucesivas (0 a 99) de carácter evolutivo**, con **50 soluciones por generación (0 a 49)** provenientes de una sola corrida de optimización de cerchas de acero en 2D de 20 metros de luz.
 - **Lotes poblacionales:** Cada ciclo registra 50 apariciones. Sin registros operativos del solver no se presume que todas representen evaluaciones FEM nuevas ni que el índice de solución sea un orden de evaluación.
-- **Proceso de búsqueda:** El origen evolutivo fue informado por las fuentes humanas del proyecto. El Excel registra poblaciones, pero no padres, operadores ni reglas de supervivencia. Cruce y mutación son mecanismos posibles cuya aplicación en la corrida original requiere evidencia del algoritmo. Una aparición puede corresponder a un diseño nuevo o a uno ya registrado; no se presupone mejora individual ni del frente de cada generación.
+- **Proceso de búsqueda:** Los antecedentes del caso describen un proceso evolutivo. El Excel registra poblaciones, pero no padres, operadores ni reglas de supervivencia. Cruce y mutación son mecanismos posibles cuya aplicación en la corrida original no puede reconstruirse a partir de este archivo. Una aparición puede corresponder a un diseño nuevo o a uno ya registrado; no se presupone mejora individual ni del frente de cada generación.
 - **Inexistencia de diseño base:** El identificador `{0;0}` identifica al individuo de índice cero de la generación inicial; no prueba orden de consulta ni representa una referencia de calibración.
 
 ---
@@ -50,18 +50,18 @@ El archivo `data/processed_evolution/design_membership.csv` preserva todas las a
 
 La preparación canónica extrae y normaliza siete entradas geométricas y tres respuestas estructurales:
 
-El material confirmado es acero A36, con tensión de fluencia de 250 MPa y comprobaciones según Eurocódigo 3. Las secciones seleccionadas por barra pertenecen al catálogo de perfiles tubulares rectangulares europeos indicado por la profesora; sus asignaciones individuales no están en las siete entradas.
+Los antecedentes del caso identifican acero A36, tensión de fluencia de 250 MPa y comprobaciones según Eurocódigo 3. Describen secciones por barra de un catálogo de perfiles tubulares rectangulares europeos; sus asignaciones individuales no están en las siete entradas.
 
-La denominación A36 fue confirmada directamente por el autor en la conversación del proyecto; no se atribuye su identificación al correo de la profesora. L/700 se adopta como criterio operativo recomendado, aunque no era una restricción explícita del proceso original.
+Estas características se conservan como antecedentes de procedencia y no se verifican de forma independiente a partir del Excel. L/700 se adopta como criterio operativo del estudio, aunque no era una restricción explícita del proceso original.
 
-### Ficha física de procedencia y pendientes
+### Alcance documental y reconstrucción del caso
 
-- Confirmado o informado por las fuentes humanas registradas: acero A36, fluencia 250 MPa, comprobaciones Eurocódigo 3, luz 20 m, geometría 2D simétrica, secciones por barra y evaluación FEM. El registro de declaraciones, fuentes y estados se conserva en [procedencia.py](../src/truss_research/datos/procedencia.py) y se exporta como `physical_provenance.csv` durante los reportes de robustez, no durante la preparación del dataset. Ese registro no sustituye el correo o la conversación original; parte de su referencia documental, `docs/SCOPE.md`, falta en este checkout. El Excel permite comprobar valores y repeticiones, pero no verificar por sí solo material, unidades, solver ni significado físico de las variables.
-- Pendiente de obtener de la fuente original: cargas y combinaciones; ubicación y restricciones de apoyos; conectividad y regla geométrica completa; catálogo y asignación de secciones; algoritmo de dimensionamiento; solver, versión y tipo de análisis; definición nodal, signo y agregación de desplazamiento; definición de utilización y comprobaciones de resistencia/estabilidad por barra.
-- Confirmación necesaria para interpretar la regresión: explicar si las secciones se fijaban o se optimizaban mediante una regla determinista para cada geometría. Etiquetas iguales en repeticiones no prueban que las siete entradas definan completamente la estructura.
+- Características registradas en la documentación del caso: acero A36, fluencia 250 MPa, comprobaciones Eurocódigo 3, luz 20 m, geometría 2D simétrica, secciones por barra y evaluación FEM. El registro original de procedencia se conserva en [procedencia.py](../src/truss_research/datos/procedencia.py) y se exporta como `physical_provenance.csv`. La documentación disponible es parcial; el Excel permite comprobar valores y repeticiones, pero no verificar por sí solo material, unidades, solver ni significado físico de las variables.
+- Información no disponible para reconstruir el evaluador: cargas y combinaciones; ubicación y restricciones de apoyos; conectividad y regla geométrica completa; catálogo y asignación de secciones; algoritmo de dimensionamiento; solver, versión y tipo de análisis; definición nodal, signo y agregación de desplazamiento; definición de utilización y comprobaciones de resistencia/estabilidad por barra.
+- Limitación de representación: no se ha establecido si las secciones se fijaban o se optimizaban mediante una regla determinista para cada geometría. Etiquetas iguales en repeticiones no prueban que las siete entradas definan completamente la estructura.
 - Alcance admisible: predecir las respuestas registradas bajo el proceso original y comparar modelos en esa fuente. La ficha incompleta impide reconstruir y certificar configuraciones nuevas; los umbrales agregados y el acuerdo entre predictores no sustituyen una verificación estructural.
 
-No se inventan valores para completar esta ficha. La documentación pendiente se solicita a la fuente y se incorpora con evidencia y fecha, sin cambiar silenciosamente el contrato de una campaña cerrada.
+La reconstrucción de un modelo FEM reproducible y la validación de configuraciones nuevas se plantean como trabajo futuro. La incorporación de nueva información debe documentarse y distinguirse del alcance de la campaña cerrada.
 
 | Nombre columna | Tipo | Rango / Valores | Unidad | Descripción técnica |
 | --- | --- | --- | --- | --- |

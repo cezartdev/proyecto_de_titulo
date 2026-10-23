@@ -26,7 +26,7 @@ La generación representa el ciclo evolutivo. El índice de solución identifica
 
 El protocolo principal prepara diseños por primera aparición en bloques contiguos de generaciones. Un superviviente sigue siendo conocido en los periodos posteriores. Los pliegues progresivos reservan calentamiento sin OOF y registran cobertura explícita; poda y selección de iteraciones usan únicamente datos internos anteriores. Se mantienen las once familias predictivas y sus optimizaciones de entrenamiento.
 
-El autor confirma acero A36, fluencia de 250 MPa y comprobaciones según Eurocódigo 3. La profesora informó geometría 2D simétrica de 20 m, secciones por barra y evaluación FEM. Faltan cargas, apoyos, solver, algoritmo y asignaciones completas para reconstruir y verificar configuraciones nuevas. La utilización promedio no certifica cada barra ni demuestra por sí sola estabilidad estructural.
+Los antecedentes documentales del caso describen acero A36, fluencia de 250 MPa, comprobaciones según Eurocódigo 3, geometría 2D simétrica de 20 m, secciones por barra y evaluación FEM. El archivo analizado no incluye la especificación completa de cargas, apoyos, solver, algoritmo y asignación de secciones. Reconstruir un evaluador estructural reproducible y verificar configuraciones nuevas constituye una línea de trabajo futuro. La utilización promedio no certifica cada barra ni demuestra por sí sola estabilidad estructural.
 
 En B, una población persistente produce propuestas mixtas de cruce y mutación. RL selecciona antes de consultar; el resultado actualiza supervivencia y archivo. La variante asistida y greedy usan un predictor auxiliar, con sus costos contabilizados. Los modelos de evaluación no aprenden de sus propias predicciones como si fueran nuevas mediciones.
 
